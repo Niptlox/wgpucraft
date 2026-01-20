@@ -5,22 +5,31 @@ pub enum IconType {
     ROCK,
     GRASS,
     DIRT,
-    STONE,
-    WOODEN,
+    WATER,
+    DEBUG,
 }
 
 const ICON_SIZE: (f32, f32) = (32.0, 32.0);
 const TEXTURE_SIZE: (f32, f32) = (512.0, 512.0);
 
 impl IconType {
+    pub fn all() -> Vec<IconType> {
+        vec![
+            IconType::ROCK,
+            IconType::GRASS,
+            IconType::DIRT,
+            IconType::WATER,
+            IconType::DEBUG,
+        ]
+    }
+
     fn get_uv_cords(&self) -> [f32; 4] {
         let (x, y) = match self {
             IconType::ROCK => (0, 0),
             IconType::GRASS => (1, 0),
             IconType::DIRT => (2, 0),
-            IconType::STONE => (3, 0),
-            IconType::WOODEN => (4, 0),
-            // Mapea más iconos según tu atlas
+            IconType::WATER => (3, 0),
+            IconType::DEBUG => (4, 0),
         };
 
         let u_min = (x as f32 * ICON_SIZE.0) / TEXTURE_SIZE.0;
@@ -35,17 +44,17 @@ impl IconType {
         match self {
             IconType::ROCK => IconType::GRASS,
             IconType::GRASS => IconType::DIRT,
-            IconType::DIRT => IconType::STONE,
-            IconType::STONE => IconType::WOODEN,
-            IconType::WOODEN => IconType::ROCK, // circular
+            IconType::DIRT => IconType::WATER,
+            IconType::WATER => IconType::DEBUG,
+            IconType::DEBUG => IconType::ROCK, // циклический переход
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            IconType::ROCK => IconType::WOODEN,
-            IconType::WOODEN => IconType::STONE,
-            IconType::STONE => IconType::DIRT,
+            IconType::ROCK => IconType::DEBUG,
+            IconType::DEBUG => IconType::WATER,
+            IconType::WATER => IconType::DIRT,
             IconType::DIRT => IconType::GRASS,
             IconType::GRASS => IconType::ROCK,
         }
@@ -58,7 +67,7 @@ impl IconType {
         width: f32,
         height: f32,
         aspect_correction: f32,
-    ) -> ([HUDVertex; 4], [u16; 6]) {
+    ) -> ([HUDVertex; 4], [u32; 6]) {
         let uv = self.get_uv_cords();
         let half_width = (width / 2.0) * aspect_correction;
         let half_height = height / 2.0;
@@ -83,8 +92,29 @@ impl IconType {
         ];
 
         // Индексы для рендера двух треугольников (квад)
-        let indices = [0, 1, 2, 2, 3, 0];
+        let indices: [u32; 6] = [0, 1, 2, 2, 3, 0];
 
         (vertices, indices)
+    }
+
+    pub fn to_material(&self) -> crate::render::atlas::MaterialType {
+        match self {
+            IconType::ROCK => crate::render::atlas::MaterialType::ROCK,
+            IconType::GRASS => crate::render::atlas::MaterialType::GRASS,
+            IconType::DIRT => crate::render::atlas::MaterialType::DIRT,
+            IconType::WATER => crate::render::atlas::MaterialType::WATER,
+            IconType::DEBUG => crate::render::atlas::MaterialType::DEBUG,
+        }
+    }
+
+    pub fn from_material(mat: crate::render::atlas::MaterialType) -> Option<Self> {
+        match mat {
+            crate::render::atlas::MaterialType::ROCK => Some(IconType::ROCK),
+            crate::render::atlas::MaterialType::GRASS => Some(IconType::GRASS),
+            crate::render::atlas::MaterialType::DIRT => Some(IconType::DIRT),
+            crate::render::atlas::MaterialType::WATER => Some(IconType::WATER),
+            crate::render::atlas::MaterialType::DEBUG => Some(IconType::DEBUG),
+            crate::render::atlas::MaterialType::AIR => None,
+        }
     }
 }

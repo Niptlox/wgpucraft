@@ -1,4 +1,5 @@
 /target
+/saves
 Cargo.lock
 .vscode
 .vers

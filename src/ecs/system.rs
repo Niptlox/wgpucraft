@@ -1,6 +1,6 @@
 use super::universe::World;
 
 pub trait System {
-    /// Ejecuta la lógica del sistema.
+    /// Выполняет логику системы.
     fn run(&self, world: &mut World);
 }

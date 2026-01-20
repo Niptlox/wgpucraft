@@ -30,6 +30,8 @@ pub struct DynamicBuffer<T: Copy + Pod>(Buffer<T>);
 
 impl<T: Copy + Pod> DynamicBuffer<T> {
     pub fn new(device: &wgpu::Device, len: usize, usage: wgpu::BufferUsages) -> Self {
+        // Не создаём буфер нулевого размера, чтобы не паниковали драйверы GPU; минимум 1 элемент.
+        let len = len.max(1);
         let buffer = Buffer {
             buff: device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
@@ -41,6 +43,10 @@ impl<T: Copy + Pod> DynamicBuffer<T> {
             phantom_data: std::marker::PhantomData,
         };
         Self(buffer)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len
     }
 
     pub fn update(&self, queue: &wgpu::Queue, vals: &[T], offset: usize) {

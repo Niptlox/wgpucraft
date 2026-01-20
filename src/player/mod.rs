@@ -13,6 +13,7 @@ pub struct Player {
     pub last_pos: cgmath::Point3<f32>,
     pub speed: f32,
     pub mode: PlayerMode,
+    view_mode: ViewMode,
     position: Vector3<f32>,
     velocity: Vector3<f32>,
     on_ground: bool,
@@ -32,6 +33,7 @@ impl Player {
             last_pos: cgmath::Point3::new(0.0, 0.0, 0.0),
             speed,
             mode: cfg.player.mode.clone(),
+            view_mode: ViewMode::FirstPerson,
             position: vec3(0.0, 0.0, 0.0),
             velocity: vec3(0.0, 0.0, 0.0),
             on_ground: false,
@@ -75,11 +77,26 @@ impl Player {
     }
 
     fn sync_camera(&mut self) {
-        self.camera.position = cgmath::Point3::new(
-            self.position.x,
-            self.position.y + self.eye_height,
-            self.position.z,
-        );
+        match self.view_mode {
+            ViewMode::FirstPerson => {
+                self.camera.position = cgmath::Point3::new(
+                    self.position.x,
+                    self.position.y + self.eye_height,
+                    self.position.z,
+                );
+            }
+            ViewMode::ThirdPerson { distance } => {
+                let (sin_yaw, cos_yaw) = self.camera.yaw.0.sin_cos();
+                let back = vec3(-cos_yaw, 0.0, -sin_yaw).normalize();
+                let anchor = vec3(
+                    self.position.x,
+                    self.position.y + self.eye_height,
+                    self.position.z,
+                );
+                let offset = back * distance + vec3(0.0, -0.3, 0.0);
+                self.camera.position = (anchor + offset).into();
+            }
+        }
     }
 
     fn update_creative(&mut self, dt: std::time::Duration, desired_velocity: Vector3<f32>) {
@@ -94,7 +111,7 @@ impl Player {
         desired_velocity: Vector3<f32>,
         chunks: &ChunkManager,
     ) {
-        // Horizontal velocity is immediate; vertical is physics-driven.
+        // Горизонтальная скорость задаётся мгновенно, вертикальная подчиняется физике.
         let mut delta = vec3(
             desired_velocity.x * dt.as_secs_f32(),
             0.0,
@@ -116,7 +133,7 @@ impl Player {
         if collided_y && self.velocity.y < 0.0 {
             self.on_ground = true;
             self.velocity.y = 0.0;
-            // Snap slightly above ground to avoid oscillation
+            // Поднимаем чуть выше земли, чтобы избежать подёргиваний
             self.position.y = self.position.y.floor() + 0.001;
         } else {
             self.on_ground = false;
@@ -196,4 +213,33 @@ impl Player {
             self.position.z + self.bounds_radius,
         )
     }
+
+    pub fn intersects_block(&self, block_pos: Vector3<i32>) -> bool {
+        let min = self.aabb_min();
+        let max = self.aabb_max();
+        let block_min = vec3(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
+        let block_max = block_min + vec3(1.0, 1.0, 1.0);
+        !(max.x <= block_min.x
+            || min.x >= block_max.x
+            || max.y <= block_min.y
+            || min.y >= block_max.y
+            || max.z <= block_min.z
+            || min.z >= block_max.z)
+    }
 }
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ViewMode {
+    FirstPerson,
+    ThirdPerson { distance: f32 },
+}
+    pub fn toggle_view(&mut self) {
+        self.view_mode = match self.view_mode {
+            ViewMode::FirstPerson => ViewMode::ThirdPerson { distance: 4.0 },
+            ViewMode::ThirdPerson { .. } => ViewMode::FirstPerson,
+        };
+    }
+
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode
+    }

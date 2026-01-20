@@ -1,6 +1,12 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    fs,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use cgmath::Vector3;
+use std::collections::HashMap;
+use anyhow::{bail, Result};
 #[cfg(feature = "tracy")]
 use tracy_client::span;
 
@@ -8,7 +14,7 @@ use crate::render::{atlas::MaterialType, mesh::Mesh, pipelines::terrain::BlockVe
 
 use super::{biomes::BiomeParameters, block::Block, generator::LAND_LEVEL, noise::NoiseGenerator};
 
-pub const CHUNK_Y_SIZE: usize = 100;
+pub const CHUNK_Y_SIZE: usize = 256;
 pub const CHUNK_AREA: usize = 16;
 pub const CHUNK_AREA_WITH_PADDING: usize = CHUNK_AREA + 2; // +1 с каждой стороны для паддинга
 pub const TOTAL_CHUNK_SIZE: usize =
@@ -18,6 +24,7 @@ pub struct Chunk {
     pub blocks: Vec<Block>,
     pub offset: [i32; 3],
     pub mesh: Mesh<BlockVertex>,
+    pub dirty: bool,
 }
 
 impl Chunk {
@@ -50,6 +57,7 @@ impl Chunk {
             blocks,
             offset,
             mesh,
+            dirty: false,
         }
     }
 
@@ -119,8 +127,6 @@ impl Chunk {
                     );
                     let new_height = (biome.base_height + height_variation).round() as usize;
 
-                    //let new_height = y;
-
                     let block_type = if y > new_height {
                         if y <= LAND_LEVEL {
                             MaterialType::WATER
@@ -140,6 +146,7 @@ impl Chunk {
                 }
             }
         }
+        self.dirty = false;
     }
 
     pub fn update_mesh(&mut self, biome: BiomeParameters) {
@@ -162,7 +169,7 @@ impl Chunk {
 
                     let block = self.get_block(y, x, z).unwrap();
                     let mut block_vertices = Vec::with_capacity(4 * 6);
-                    let mut block_indices: Vec<u16> = Vec::with_capacity(6 * 6);
+                    let mut block_indices: Vec<u32> = Vec::with_capacity(6 * 6);
 
                     if block.material_type as i32 == MaterialType::AIR as i32 {
                         continue;
@@ -170,12 +177,18 @@ impl Chunk {
 
                     let mut quad_counter = 0;
 
-                    for quad in block.quads.iter() {
+                    for side in crate::terrain_gen::block::Direction::ALL {
                         let neighbor_pos: Vector3<i32> =
-                            block.get_vec_position() + quad.side.to_vec();
+                            block.get_vec_position() + side.to_vec();
                         let visible = self.is_quad_visible(&neighbor_pos);
 
                         if visible {
+                            let world_pos = block.get_world_position();
+                            let quad = crate::terrain_gen::block::Quad::new(
+                                block.material_type,
+                                side,
+                                world_pos,
+                            );
                             block_vertices.extend_from_slice(&quad.vertices);
                             block_indices.extend_from_slice(&quad.get_indices(quad_counter));
                             quad_counter += 1;
@@ -184,7 +197,7 @@ impl Chunk {
 
                     block_indices = block_indices
                         .iter()
-                        .map(|i| i + verts.len() as u16)
+                        .map(|i| i + verts.len() as u32)
                         .collect();
                     verts.extend(block_vertices);
                     indices.extend(block_indices);
@@ -206,21 +219,31 @@ impl Chunk {
             let neighbor_block = self.get_block(y_index, x_index, z_index).unwrap();
             return neighbor_block.material_type as u16 == MaterialType::AIR as u16;
         } else {
-            return false;
+            // Нет соседа в этом чанке — считаем грань видимой, чтобы не пропадали блоки на границах.
+            return true;
         }
     }
 }
 
 pub struct ChunkManager {
     pub chunks: Vec<Arc<RwLock<Chunk>>>,
+    offset_index_map: HashMap<[i32; 3], usize>,
+    index_offset: Vec<[i32; 3]>,
 }
 
 impl ChunkManager {
     pub fn new() -> Self {
-        ChunkManager { chunks: Vec::new() }
+        ChunkManager {
+            chunks: Vec::new(),
+            offset_index_map: HashMap::new(),
+            index_offset: Vec::new(),
+        }
     }
 
     pub fn add_chunk(&mut self, chunk: Chunk) {
+        let idx = self.chunks.len();
+        self.offset_index_map.insert(chunk.offset, idx);
+        self.index_offset.push(chunk.offset);
         self.chunks.push(Arc::new(RwLock::new(chunk)));
     }
 
@@ -233,9 +256,7 @@ impl ChunkManager {
     }
 
     pub fn get_chunk_index_by_offset(&self, offset: &[i32; 3]) -> Option<usize> {
-        self.chunks
-            .iter()
-            .position(|chunk| chunk.read().unwrap().offset == *offset)
+        self.offset_index_map.get(offset).copied()
     }
 
     // Получить материал блока в мировых координатах
@@ -267,7 +288,7 @@ impl ChunkManager {
         &mut self,
         world_pos: Vector3<i32>,
         material: MaterialType,
-    ) -> Option<usize> {
+    ) -> Vec<usize> {
         let (chunk_offset, local_pos) = world_pos_to_chunk_and_local(world_pos);
 
         // Учитываем паддинг (local_pos 0..15 -> нужно -1..16)
@@ -277,18 +298,86 @@ impl ChunkManager {
 
         if !pos_in_chunk_bounds(Vector3::new(x, y, z)) {
             println!("Position out of bounds: {:?}", world_pos);
-            return None;
+            return Vec::new();
+        }
+
+        let mut touched = Vec::new();
+        let mut neighbor_offsets = Vec::new();
+        if local_pos.x == 0 {
+            neighbor_offsets.push([chunk_offset[0] - 1, chunk_offset[1], chunk_offset[2]]);
+        } else if local_pos.x == (CHUNK_AREA as i32 - 1) {
+            neighbor_offsets.push([chunk_offset[0] + 1, chunk_offset[1], chunk_offset[2]]);
+        }
+        if local_pos.z == 0 {
+            neighbor_offsets.push([chunk_offset[0], chunk_offset[1], chunk_offset[2] - 1]);
+        } else if local_pos.z == (CHUNK_AREA as i32 - 1) {
+            neighbor_offsets.push([chunk_offset[0], chunk_offset[1], chunk_offset[2] + 1]);
         }
 
         if let Some(index) = self.get_chunk_index_by_offset(&chunk_offset) {
             let mut chunk = self.chunks[index].write().unwrap();
-            let block = chunk.get_block_mut(y as usize, x as usize, z as usize)?;
-            block.update(material, chunk_offset);
-            println!("Block updated at world position: {:?}", world_pos);
-            return Some(index);
+            if let Some(block) = chunk.get_block_mut(y as usize, x as usize, z as usize) {
+                block.update(material, chunk_offset);
+                chunk.dirty = true;
+                println!("Block updated at world position: {:?}", world_pos);
+                touched.push(index);
+            }
+            drop(chunk);
+
+            // Если блок на границе чанка — отмечаем соседние чанки как грязные, чтобы перерассчитать меш.
+            for neigh_off in neighbor_offsets {
+                if let Some(nidx) = self.get_chunk_index_by_offset(&neigh_off) {
+                    if let Ok(mut neigh_chunk) = self.chunks[nidx].write() {
+                        // Обновляем паддинг соседа, чтобы его грань стала видимой/скрытой корректно.
+                        let origin = Vector3::new(
+                            neigh_off[0] * CHUNK_AREA as i32,
+                            neigh_off[1] * CHUNK_Y_SIZE as i32,
+                            neigh_off[2] * CHUNK_AREA as i32,
+                        );
+                        let local_in_neigh = world_pos - origin;
+                        let on_padding = local_in_neigh.x == -1
+                            || local_in_neigh.x == CHUNK_AREA as i32
+                            || local_in_neigh.z == -1
+                            || local_in_neigh.z == CHUNK_AREA as i32;
+                        if on_padding && pos_in_chunk_bounds(local_in_neigh) {
+                            let nx = (local_in_neigh.x + 1) as usize;
+                            let nz = (local_in_neigh.z + 1) as usize;
+                            let ny = local_in_neigh.y as usize;
+                            if let Some(pad_block) = neigh_chunk.get_block_mut(ny, nx, nz) {
+                                pad_block.update(material, neigh_off);
+                            }
+                        }
+                        neigh_chunk.dirty = true;
+                    }
+                    touched.push(nidx);
+                }
+            }
+            touched
         } else {
             println!("Chunk not found for world position: {:?}", world_pos);
-            return None;
+            Vec::new()
+        }
+    }
+
+    pub fn update_chunk_offset(&mut self, index: usize, new_offset: [i32; 3]) {
+        if let Some(old_offset) = self.index_offset.get(index).copied() {
+            self.offset_index_map.remove(&old_offset);
+        }
+        if index < self.index_offset.len() {
+            self.index_offset[index] = new_offset;
+        }
+        self.offset_index_map.insert(new_offset, index);
+        if let Some(chunk) = self.chunks.get(index) {
+            if let Ok(mut chunk) = chunk.write() {
+                chunk.offset = new_offset;
+            }
+        }
+    }
+
+    pub fn remove_chunk_from_map(&mut self, index: usize) {
+        if let Some(old_offset) = self.index_offset.get(index).copied() {
+            self.offset_index_map.remove(&old_offset);
+            self.index_offset[index] = [0, 0, 0];
         }
     }
 }
@@ -324,4 +413,54 @@ pub fn local_pos_to_world(offset: [i32; 3], local_pos: Vector3<i32>) -> Vector3<
         local_pos.y as f32 + (offset[1] as f32 * CHUNK_AREA as f32),
         local_pos.z as f32 + (offset[2] as f32 * CHUNK_AREA as f32),
     )
+}
+
+fn material_to_u8(mat: MaterialType) -> u8 {
+    match mat {
+        MaterialType::DIRT => 0,
+        MaterialType::GRASS => 1,
+        MaterialType::ROCK => 2,
+        MaterialType::WATER => 3,
+        MaterialType::AIR => 4,
+        MaterialType::DEBUG => 5,
+    }
+}
+
+fn material_from_u8(v: u8) -> MaterialType {
+    match v {
+        0 => MaterialType::DIRT,
+        1 => MaterialType::GRASS,
+        2 => MaterialType::ROCK,
+        3 => MaterialType::WATER,
+        4 => MaterialType::AIR,
+        5 => MaterialType::DEBUG,
+        _ => MaterialType::AIR,
+    }
+}
+
+impl Chunk {
+    pub fn save_to(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut buf = Vec::with_capacity(self.blocks.len());
+        for block in &self.blocks {
+            buf.push(material_to_u8(block.material_type));
+        }
+        fs::write(path, buf)?;
+        Ok(())
+    }
+
+    pub fn load_from(&mut self, path: &Path, offset: [i32; 3]) -> Result<()> {
+        let data = fs::read(path)?;
+        if data.len() != self.blocks.len() {
+            bail!("chunk file has wrong size");
+        }
+        for (b, val) in self.blocks.iter_mut().zip(data.into_iter()) {
+            b.update(material_from_u8(val), offset);
+        }
+        self.offset = offset;
+        self.dirty = false;
+        Ok(())
+    }
 }

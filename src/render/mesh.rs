@@ -4,14 +4,14 @@ use super::{Vertex, pipelines::terrain::BlockVertex};
 
 #[derive(Clone)]
 
-/// Represents a vec-based mesh on the CPU
+/// Меш на CPU, хранящий вершины и индексы.
 pub struct Mesh<V: Vertex> {
     pub verts: Vec<V>,
-    pub indices: Vec<u16>,
+    pub indices: Vec<u32>,
 }
 
 impl<V: Vertex> Mesh<V> {
-    /// Create a new `Mesh`.
+    /// Создать новый `Mesh`.
     pub fn new() -> Self {
         Self {
             verts: Vec::new(),
@@ -19,12 +19,12 @@ impl<V: Vertex> Mesh<V> {
         }
     }
 
-    /// Clear vertices, allows reusing allocated memory of the underlying Vec.
+    /// Очистить вершины, сохраняя выделенную память вектора.
     pub fn clear(&mut self) {
         self.verts.clear();
     }
 
-    /// Get a slice referencing the vertices of this mesh.
+    /// Получить срез ссылок на вершины.
     pub fn vertices(&self) -> &[V] {
         &self.verts
     }
@@ -33,13 +33,13 @@ impl<V: Vertex> Mesh<V> {
         self.verts.push(vert);
     }
 
-    // new method to add indices
-    pub fn push_indices(&mut self, indices: &[u16]) {
+    // Добавить набор индексов
+    pub fn push_indices(&mut self, indices: &[u32]) {
         self.indices.extend_from_slice(indices);
     }
 
-    // returns the indices
-    pub fn indices(&self) -> &[u16] {
+    // Вернуть индексы
+    pub fn indices(&self) -> &[u32] {
         &self.indices
     }
 
@@ -47,16 +47,23 @@ impl<V: Vertex> Mesh<V> {
     where
         Vec<V>: Extend<BlockVertex>,
     {
-        let base_index = self.verts.len() as u16;
+        let base_index = self.verts.len() as u32;
         self.verts.extend(quad.vertices);
         self.indices.extend(&quad.get_indices(base_index));
+    }
+
+    pub fn clone(&self) -> Self {
+        Self {
+            verts: self.verts.clone(),
+            indices: self.indices.clone(),
+        }
     }
 
     pub fn iter_verts(&self) -> std::slice::Iter<V> {
         self.verts.iter()
     }
 
-    pub fn iter_indices(&self) -> std::vec::IntoIter<u16> {
+    pub fn iter_indices(&self) -> std::vec::IntoIter<u32> {
         self.indices.clone().into_iter()
     }
 }

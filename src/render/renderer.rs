@@ -8,6 +8,7 @@ use super::{
     pipelines::{GlobalModel, GlobalsLayouts},
     texture::{self, Texture},
 };
+use log::info;
 use crate::{hud::HUD, terrain_gen::generator::TerrainGen};
 pub trait Draw {
     fn draw<'a>(
@@ -36,17 +37,17 @@ impl<'a> Renderer<'a> {
     pub fn new(window: &'a SysWindow, present_mode: wgpu::PresentMode) -> Self {
         let size = window.inner_size();
 
-        // The instance is a handle to our GPU
-        // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
+        // Инстанс — это дескриптор для GPU.
+        // Backends::all — Vulkan + Metal + DX12 + браузерный WebGPU.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
 
-        // # Safety
+        // # Безопасность
         //
-        // The surface needs to live as long as the window that created it.
-        // State owns the window, so this should be safe.
+        // Surface должна жить столько же, сколько окно, которое её создало.
+        // State владеет окном, поэтому это безопасно.
         let surface = instance.create_surface(window).unwrap();
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -75,9 +76,9 @@ impl<'a> Renderer<'a> {
         .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        // Shader code in this tutorial assumes an sRGB surface texture. Using a different
-        // one will result in all the colors coming out darker. If you want to support non
-        // sRGB surfaces, you'll need to account for that when drawing to the frame.
+        let chosen_present_mode = Self::pick_present_mode(&surface_caps, present_mode);
+        // Шейдер ожидает sRGB-формат поверхности. Другой формат затемнит цвета,
+        // поэтому поддержку иных форматов нужно учитывать отдельно.
         let surface_format = surface_caps
             .formats
             .iter()
@@ -90,12 +91,13 @@ impl<'a> Renderer<'a> {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode,
+            present_mode: chosen_present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
             view_formats: vec![],
         };
         surface.configure(&device, &config);
+        info!("Using present mode: {:?}", chosen_present_mode);
 
         let layouts = Layouts {
             global: GlobalsLayouts::new(&device),
@@ -115,6 +117,42 @@ impl<'a> Renderer<'a> {
         }
     }
 
+    fn pick_present_mode(
+        surface_caps: &wgpu::SurfaceCapabilities,
+        requested: wgpu::PresentMode,
+    ) -> wgpu::PresentMode {
+        // Сначала пытаемся выбрать режим с минимальной задержкой, сохраняя намерение по vsync.
+        let prefer_vsync = matches!(requested, wgpu::PresentMode::AutoVsync);
+        let preference: &[wgpu::PresentMode] = if prefer_vsync {
+            &[
+                wgpu::PresentMode::Mailbox,
+                wgpu::PresentMode::Fifo,
+                wgpu::PresentMode::AutoVsync,
+            ]
+        } else {
+            &[
+                wgpu::PresentMode::Immediate,
+                wgpu::PresentMode::Mailbox,
+                wgpu::PresentMode::Fifo,
+                wgpu::PresentMode::AutoNoVsync,
+            ]
+        };
+
+        let supported = &surface_caps.present_modes;
+        preference
+            .iter()
+            .copied()
+            .find(|mode| supported.contains(mode))
+            .unwrap_or_else(|| {
+                // Запасной вариант — первый доступный режим поверхности.
+                surface_caps
+                    .present_modes
+                    .first()
+                    .copied()
+                    .unwrap_or(wgpu::PresentMode::Fifo)
+            })
+    }
+
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
@@ -131,7 +169,6 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn update(&mut self) {
-        //todo!();
     }
 
     pub fn create_consts<T: Copy + bytemuck::Pod>(&mut self, vals: &[T]) -> Consts<T> {
@@ -140,10 +177,10 @@ impl<'a> Renderer<'a> {
         consts
     }
 
-    /// Update a set of constants with the provided values.
+    /// Обновить набор констант переданными значениями.
     pub fn update_consts<T: Copy + bytemuck::Pod>(&self, consts: &mut Consts<T>, vals: &[T]) {
         #[cfg(feature = "tracy")]
-        let _span = span!("update render constants"); // <- Marca el inicio del bloque
+        let _span = span!("update render constants"); // <- Отметка начала блока
 
         consts.update(&self.queue, vals, 0)
     }
@@ -178,7 +215,7 @@ impl<'a> Renderer<'a> {
         #[cfg(feature = "tracy")]
         drop(create_encoder_span);
 
-        // Crear y liberar explícitamente el render pass
+        // Явно создаём и освобождаем render pass
         {
             #[cfg(feature = "tracy")]
             let create_render_pass = span!("create render pass");
@@ -214,9 +251,9 @@ impl<'a> Renderer<'a> {
             terrain.draw(&mut _render_pass, globals).unwrap();
 
             hud.draw(&mut _render_pass, globals).unwrap();
-        } // _render_pass se libera aquí
+        } // _render_pass освобождается здесь
 
-        // submit will accept anything that implements IntoIter
+        // submit принимает всё, что реализует IntoIter
         #[cfg(feature = "tracy")]
         let submit_encoder = span!("submit encoder");
         self.queue.submit(std::iter::once(encoder.finish()));

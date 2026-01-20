@@ -55,7 +55,7 @@ impl Direction {
         }
     }
 
-    fn get_vertices(self, material_type: MaterialType, position: [i32; 3]) -> [BlockVertex; 4] {
+    pub fn get_vertices(self, material_type: MaterialType, position: [i32; 3]) -> [BlockVertex; 4] {
         match self {
             Direction::TOP => [
                 quad_vertex([0, 1, 0], material_type, [0, 0], position, self),
@@ -111,7 +111,7 @@ impl Quad {
         }
     }
 
-    pub fn get_indices_v(&self, vertex_offset: u16) -> [u16; 6] {
+    pub fn get_indices_v(&self, vertex_offset: u32) -> [u32; 6] {
         [
             vertex_offset,
             vertex_offset + 1,
@@ -122,7 +122,7 @@ impl Quad {
         ]
     }
 
-    pub fn get_indices(&self, i: u16) -> [u16; 6] {
+    pub fn get_indices(&self, i: u32) -> [u32; 6] {
         let displacement = i * 4;
         [
             0 + displacement,
@@ -137,7 +137,6 @@ impl Quad {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Block {
-    pub quads: [Quad; 6],
     pub position: [i32; 3],
     pub material_type: MaterialType,
     chunk_offset: [i32; 3],
@@ -145,10 +144,7 @@ pub struct Block {
 
 impl Block {
     pub fn new(material_type: MaterialType, position: [i32; 3], chunk_offset: [i32; 3]) -> Self {
-        let quads = Block::generate_quads(material_type, position, chunk_offset);
-
         Self {
-            quads,
             position,
             material_type,
             chunk_offset,
@@ -167,7 +163,7 @@ impl Block {
         Vector3::new(self.position[0], self.position[1], self.position[2])
     }
 
-    // Get the world position of the block
+    // Получить мировую позицию блока
     pub fn get_world_position(&self) -> [i32; 3] {
         [
             self.position[0] + (self.chunk_offset[0] * CHUNK_AREA as i32),
@@ -176,38 +172,15 @@ impl Block {
         ]
     }
 
-    fn generate_quads(
-        material_type: MaterialType,
-        position: [i32; 3],
-        chunk_offset: [i32; 3],
-    ) -> [Quad; 6] {
-        let world_pos = [
-            position[0] + (chunk_offset[0] * CHUNK_AREA as i32),
-            position[1],
-            position[2] + (chunk_offset[2] * CHUNK_AREA as i32),
-        ];
-
-        let top = Quad::new(material_type, Direction::TOP, world_pos);
-        let bottom = Quad::new(material_type, Direction::BOTTOM, world_pos);
-        let right = Quad::new(material_type, Direction::RIGHT, world_pos);
-        let left = Quad::new(material_type, Direction::LEFT, world_pos);
-        let front = Quad::new(material_type, Direction::FRONT, world_pos);
-        let back = Quad::new(material_type, Direction::BACK, world_pos);
-
-        [top, bottom, right, left, front, back]
-    }
-
     pub fn update(&mut self, new_material_type: MaterialType, offset: [i32; 3]) {
         self.chunk_offset = offset;
         self.material_type = new_material_type;
-        self.quads = Block::generate_quads(new_material_type, self.position, offset);
     }
 }
 
 impl Default for Block {
     fn default() -> Self {
         Block {
-            quads: [Quad::new(MaterialType::AIR, Direction::TOP, [0, 0, 0]); 6],
             position: [0, 0, 0],
             material_type: MaterialType::AIR,
             chunk_offset: [0, 0, 0],

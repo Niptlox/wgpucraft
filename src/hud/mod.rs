@@ -25,8 +25,9 @@ pub struct HUD {
     pub(crate) pipeline: wgpu::RenderPipeline,
     crosshair: HUDElement,
     widget: HUDElement,
-    icons_atlas: HUDElement,
-    pub selected_icon: IconType,
+    toolbar: HUDElement,
+    palette: Vec<IconType>,
+    selected_index: usize,
     debug_overlay: Option<DebugOverlay>,
     aspect_correction: f32,
 }
@@ -45,6 +46,8 @@ impl HUD {
         show_debug_overlay: bool,
     ) -> Self {
         let aspect_correction = renderer.size.height as f32 / renderer.size.width as f32;
+        let palette = IconType::all();
+        let selected_index = 0;
         // Загрузка текстур интерфейса
         let crosshair_bytes = include_bytes!("../../assets/images/crosshair.png");
         let widget_bytes = include_bytes!("../../assets/images/widget_window.png");
@@ -98,9 +101,7 @@ impl HUD {
         let (crosshair_verts, crosshair_indices) =
             create_hud_quad(0.0, 0.0, 0.06, 0.06, aspect_correction); // Размер прицела
         let (widget_verts, widget_indices) =
-            create_hud_quad(0.85, -0.85, 0.2, 0.2, aspect_correction); // Окно хотбара
-        let (icon_verts, icon_indices) =
-            selected_icon.get_vertex_quad(0.85, -0.85, 0.16, 0.16, aspect_correction); // Иконка активного блока
+            create_hud_quad(0.0, -0.85, 0.7, 0.18, aspect_correction); // Окно хотбара
 
         // Создаём модели
         let crosshair_model = Model::new(
@@ -121,16 +122,14 @@ impl HUD {
         )
         .unwrap();
 
-        let icon_model = Model::new(
+        let toolbar_model = build_toolbar_model(
             &renderer.device,
-            &Mesh {
-                verts: icon_verts.into_iter().collect(), // Преобразуем массив в Vec
-                indices: icon_indices.into_iter().collect(), // Преобразуем массив в Vec
-            },
-        )
-        .unwrap();
+            &palette,
+            selected_index,
+            aspect_correction,
+        );
 
-        // Crear bind groups
+        // Создаём bind group для каждого элемента
         let crosshair = HUDElement {
             texture: crosshair_tex,
             bind_group: crosshair_bind_group,
@@ -143,10 +142,10 @@ impl HUD {
             model: widget_model,
         };
 
-        let icons_atlas = HUDElement {
+        let toolbar = HUDElement {
             texture: icons_atlas_tex,
             bind_group: icons_bind_group,
-            model: icon_model,
+            model: toolbar_model,
         };
 
         let debug_overlay = if show_debug_overlay {
@@ -163,28 +162,46 @@ impl HUD {
             pipeline,
             crosshair,
             widget,
-            icons_atlas,
-            selected_icon,
+            toolbar,
+            palette,
+            selected_index,
             debug_overlay,
             aspect_correction,
         }
     }
 
     pub fn update(&mut self, renderer: &Renderer) {
-        // Пересобрать геометрию выбранной иконки
-        let (icon_verts, icon_indices) =
-            self.selected_icon
-                .get_vertex_quad(0.85, -0.85, 0.16, 0.16, self.aspect_correction);
-
-        // Обновить модель атласа иконок
-        self.icons_atlas.model = Model::new(
+        self.toolbar.model = build_toolbar_model(
             &renderer.device,
-            &Mesh {
-                verts: icon_verts.into_iter().collect(),
-                indices: icon_indices.into_iter().collect(),
-            },
-        )
-        .expect("Failed to update icon model");
+            &self.palette,
+            self.selected_index,
+            self.aspect_correction,
+        );
+    }
+
+    pub fn select_next(&mut self, renderer: &Renderer) {
+        self.selected_index = (self.selected_index + 1) % self.palette.len();
+        self.update(renderer);
+    }
+
+    pub fn select_prev(&mut self, renderer: &Renderer) {
+        if self.selected_index == 0 {
+            self.selected_index = self.palette.len() - 1;
+        } else {
+            self.selected_index -= 1;
+        }
+        self.update(renderer);
+    }
+
+    pub fn select_by_icon(&mut self, icon: IconType, renderer: &Renderer) {
+        if let Some(idx) = self.palette.iter().position(|p| *p == icon) {
+            self.selected_index = idx;
+            self.update(renderer);
+        }
+    }
+
+    pub fn selected_icon(&self) -> IconType {
+        self.palette[self.selected_index]
     }
 
     pub fn update_overlay(&mut self, renderer: &Renderer, stats: &OverlayStats) {
@@ -245,7 +262,7 @@ impl Draw for HUD {
         render_pass.set_bind_group(1, globals, &[]);
 
         // Рендерим элементы HUD
-        let mut elements: Vec<&HUDElement> = vec![&self.crosshair, &self.widget, &self.icons_atlas];
+        let mut elements: Vec<&HUDElement> = vec![&self.crosshair, &self.widget, &self.toolbar];
         if let Some(overlay) = &self.debug_overlay {
             if overlay.visible {
                 elements.push(&overlay.element);
@@ -255,8 +272,8 @@ impl Draw for HUD {
         for element in elements {
             render_pass.set_bind_group(0, &element.bind_group, &[]);
             render_pass.set_vertex_buffer(0, element.model.vbuf().slice(..));
-            render_pass.set_index_buffer(element.model.ibuf().slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..element.model.num_indices as u32, 0, 0..1);
+            render_pass.set_index_buffer(element.model.ibuf().slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..element.model.num_indices, 0, 0..1);
         }
 
         Ok(())
@@ -269,36 +286,69 @@ pub fn create_hud_quad(
     width: f32,
     height: f32,
     aspect_correction: f32,
-) -> (Vec<HUDVertex>, Vec<u16>) {
+) -> (Vec<HUDVertex>, Vec<u32>) {
     let half_w = (width / 2.0) * aspect_correction;
     let half_h = height / 2.0;
 
     let vertices = vec![
-        // Top Left
+        // Верхний левый угол
         HUDVertex {
             position: [center_x - half_w, center_y - half_h],
             uv: [0.0, 0.0],
         },
-        // Top Right
+        // Верхний правый угол
         HUDVertex {
             position: [center_x + half_w, center_y - half_h],
             uv: [1.0, 0.0],
         },
-        // Bottom Right
+        // Нижний правый угол
         HUDVertex {
             position: [center_x + half_w, center_y + half_h],
             uv: [1.0, 1.0],
         },
-        // Bottom Left
+        // Нижний левый угол
         HUDVertex {
             position: [center_x - half_w, center_y + half_h],
             uv: [0.0, 1.0],
         },
     ];
 
-    let indices = vec![0, 1, 2, 0, 2, 3];
+    let indices = vec![0u32, 1, 2, 0, 2, 3];
 
     (vertices, indices)
+}
+
+fn build_toolbar_model(
+    device: &wgpu::Device,
+    palette: &[IconType],
+    selected_index: usize,
+    aspect_correction: f32,
+) -> Model<HUDVertex> {
+    let mut verts = Vec::new();
+    let mut indices = Vec::new();
+    let base_x = -0.45;
+    let step = 0.18;
+    for (i, icon) in palette.iter().enumerate() {
+        let is_selected = i == selected_index;
+        let width = if is_selected { 0.14 } else { 0.12 };
+        let height = if is_selected { 0.14 } else { 0.12 };
+        let center_x = base_x + i as f32 * step;
+        let center_y = -0.85;
+        let (quad_verts, quad_indices) =
+            icon.get_vertex_quad(center_x, center_y, width, height, aspect_correction);
+        let base_index = verts.len() as u32;
+        verts.extend_from_slice(&quad_verts);
+        indices.extend(quad_indices.iter().map(|idx| idx + base_index));
+    }
+
+    Model::new(
+        device,
+        &Mesh {
+            verts,
+            indices,
+        },
+    )
+    .expect("Failed to build toolbar model")
 }
 
 struct DebugOverlay {

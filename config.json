@@ -8,7 +8,7 @@
   "graphics": {
     "fps_cap": 60,
     "vsync": true,
-    "render_distance_chunks": 10,
+    "render_distance_chunks": 32,
     "fov_y_degrees": 60.0
   },
   "world": {

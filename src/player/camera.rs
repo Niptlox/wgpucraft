@@ -118,7 +118,7 @@ impl Camera {
 
     pub fn step_input(&mut self, dt: Duration) -> Vector3<f32> {
         #[cfg(feature = "tracy")]
-        let _span = span!("update camera deps"); // <- Marca el inicio del bloque
+        let _span = span!("update camera deps"); // <- Отметка начала блока
 
         let movement = self.update_camera_controller(dt);
         self.update_view();
@@ -137,7 +137,7 @@ impl Camera {
     pub fn update_camera_controller(&mut self, dt: Duration) -> Vector3<f32> {
         let dt = dt.as_secs_f32();
 
-        // Move forward/backward and left/right
+        // Двигаем камеру вперёд/назад и влево/вправо
         let (yaw_sin, yaw_cos) = self.yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
@@ -148,11 +148,11 @@ impl Camera {
             * (self.camera_controller.amount_right - self.camera_controller.amount_left)
             * self.camera_controller.speed;
 
-        // Move up/down (used for creative flight)
+        // Двигаем камеру вверх/вниз (для творческого режима)
         movement.y += (self.camera_controller.amount_up - self.camera_controller.amount_down)
             * self.camera_controller.speed;
 
-        // Rotate
+        // Поворот
         self.yaw +=
             Rad(self.camera_controller.rotate_horizontal) * self.camera_controller.sensitivity * dt;
         let vertical = if self.camera_controller.invert_y {
@@ -162,14 +162,13 @@ impl Camera {
         };
         self.pitch += Rad(vertical) * self.camera_controller.sensitivity * dt;
 
-        // If process_mouse isn't called every frame, these values
-        // will not get set to zero, and the camera will rotate
-        // when moving in a non-cardinal direction.
+        // Если process_mouse не вызывается каждый кадр, значения не обнулятся,
+        // и камера начнёт вращаться при движении по диагонали.
         self.camera_controller.rotate_horizontal = 0.0;
         self.camera_controller.rotate_vertical = 0.0;
         self.camera_controller.scroll = 0.0;
 
-        // Keep the camera's angle from going too high/low.
+        // Ограничиваем угол наклона камеры.
         if self.pitch < -Rad(SAFE_FRAC_PI_2) {
             self.pitch = -Rad(SAFE_FRAC_PI_2);
         } else if self.pitch > Rad(SAFE_FRAC_PI_2) {
@@ -290,7 +289,7 @@ impl CameraController {
 
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.scroll = -match delta {
-            // I'm assuming a line is about 100 pixels
+            // Предполагаем, что одна строка колеса мыши равна ~100 пикселям
             MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
             MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => *scroll as f32,
         };

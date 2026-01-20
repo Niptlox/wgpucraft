@@ -4,11 +4,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use wgpu;
 
-/// Central configuration loaded from `config.json`.
-///
-/// The values are intentionally simple and focused on the knobs needed for the
-/// current milestones (input/loop/world sizing). New fields can be added as
-/// features land.
+/// Основная конфигурация, загружаемая из `config.json`.
+/// Поля упрощены и покрывают нужные настройки ввода, цикла и размера мира;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -32,10 +29,10 @@ pub struct InputConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GraphicsConfig {
-    /// Frames per second cap. `0` disables the cap and runs as fast as possible.
+    /// Ограничение FPS; `0` отключает лимит и рендерит максимально быстро.
     pub fps_cap: u32,
     pub vsync: bool,
-    /// View distance in chunks (square radius). Used to size world streaming.
+    /// Дальность прорисовки в чанках (квадратный радиус), влияет на размеры стриминга мира.
     pub render_distance_chunks: usize,
     pub fov_y_degrees: f32,
 }
@@ -44,6 +41,8 @@ pub struct GraphicsConfig {
 #[serde(default)]
 pub struct WorldConfig {
     pub seed: u32,
+    /// Имя мира (папка сохранения в каталоге saves/).
+    pub world_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +51,7 @@ pub struct MultiplayerConfig {
     pub ip: String,
     pub port: u16,
     pub player_name: String,
-    /// Simple RGB color for the player head. Values are 0.0..1.0.
+    /// Цвет головы игрока в RGB (значения 0.0..1.0).
     pub head_color: [f32; 3],
     pub tick_rate: u16,
 }
@@ -113,7 +112,7 @@ impl Default for GraphicsConfig {
         Self {
             fps_cap: 60,
             vsync: true,
-            render_distance_chunks: 10,
+            render_distance_chunks: 32,
             fov_y_degrees: 60.0,
         }
     }
@@ -121,7 +120,10 @@ impl Default for GraphicsConfig {
 
 impl Default for WorldConfig {
     fn default() -> Self {
-        Self { seed: 10 }
+        Self {
+            seed: 10,
+            world_name: "default".to_string(),
+        }
     }
 }
 

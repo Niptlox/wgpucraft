@@ -115,7 +115,7 @@ impl Ray {
             },
         );
 
-        let mut face = Direction::TOP; // Valor por defecto, se actualizará
+        let mut face = Direction::TOP; // Значение по умолчанию, обновится позже
         let mut traveled_distance = 0.0;
 
         // Алгоритм DDA по вокселям

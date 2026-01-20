@@ -9,8 +9,8 @@ pub trait Component: Any + Send + Sync {
     }
 }
 
-/// Macro para derivar automáticamente el trait `Component`.
-/// Esto permite usar `#[derive(Component)]` en structs.
+/// Макрос для автоматического получения трэйта `Component`.
+/// Позволяет использовать `#[derive(Component)]` на структурах.
 #[macro_export]
 macro_rules! derive_component {
     ($t:ty) => {

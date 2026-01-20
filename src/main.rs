@@ -4,7 +4,7 @@ use wgpucraft::launcher::run;
 
 fn main() {
     #[cfg(feature = "tracy")]
-    let _client = Client::start(); // Inicia el cliente de Tracy
+    let _client = Client::start(); // Запускаем клиент Tracy
 
     run();
 }

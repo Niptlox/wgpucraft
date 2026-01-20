@@ -8,10 +8,7 @@ pub mod terrain_gen;
 
 use hud::{HUD, OverlayStats, icons_atlas::IconType};
 use player::{Player, camera::Camera, raycast::Ray};
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use core::config::AppConfig;
 use render::{
@@ -19,7 +16,7 @@ use render::{
     pipelines::{GlobalModel, Globals},
     renderer::Renderer,
 };
-use terrain_gen::{biomes::PRAIRIE_PARAMS, generator::TerrainGen};
+use terrain_gen::{chunk::CHUNK_AREA, generator::TerrainGen};
 use wgpu::BindGroup;
 use winit::{
     dpi::PhysicalPosition,
@@ -96,6 +93,7 @@ impl<'a> State<'a> {
             &renderer,
             config.graphics.render_distance_chunks,
             config.world.seed,
+            &config.world.world_name,
         );
 
         Self {
@@ -117,7 +115,7 @@ impl<'a> State<'a> {
         self.window.request_redraw();
     }
 
-    //TODO: add global settings as parameter
+    // TODO: пробрасывать глобальные настройки параметром
     pub fn handle_window_event(&mut self, event: WindowEvent, elwt: &EventLoopWindowTarget<()>) {
         if !self.handle_input_event(&event) {
             match event {
@@ -144,21 +142,11 @@ impl<'a> State<'a> {
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
-                                if let Some(chunk_index) = self
+                                let updated = self
                                     .terrain
                                     .chunks
-                                    .set_block_material(hit.position, MaterialType::AIR)
-                                {
-                                    let chunk_arc =
-                                        self.terrain.chunks.get_chunk(chunk_index).unwrap();
-                                    let mut chunk = chunk_arc.write().unwrap();
-
-                                    chunk.update_mesh(PRAIRIE_PARAMS);
-
-                                    let mut chunk_model =
-                                        self.terrain.chunk_models[chunk_index].write().unwrap();
-                                    chunk_model.update(&self.renderer.queue, &chunk.mesh, 0);
-                                }
+                                    .set_block_material(hit.position, MaterialType::AIR);
+                                self.terrain.mark_chunks_dirty(&updated);
                                 println!("Блок удалён: {:?}", hit.position);
                             } else {
                                 println!("Нет блока для удаления");
@@ -169,30 +157,19 @@ impl<'a> State<'a> {
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
-                                let material = match self.hud.selected_icon {
-                                    IconType::ROCK => MaterialType::ROCK,
-                                    IconType::DIRT => MaterialType::DIRT,
-                                    IconType::GRASS => MaterialType::GRASS,
-                                    _ => MaterialType::AIR, // Воздух не меняем; при необходимости добавить материалы
-                                };
+                                let target_pos = hit.neighbor_position();
+                                if self.player.intersects_block(target_pos) {
+                                    println!("Слишком близко к игроку, блок не поставлен");
+                                } else {
+                                    let material = self.hud.selected_icon().to_material();
 
-                                if let Some(chunk_index) = self
-                                    .terrain
-                                    .chunks
-                                    .set_block_material(hit.neighbor_position(), material)
-                                {
-                                    let chunk_arc =
-                                        self.terrain.chunks.get_chunk(chunk_index).unwrap();
-                                    let mut chunk = chunk_arc.write().unwrap();
-
-                                    chunk.update_mesh(PRAIRIE_PARAMS);
-
-                                    let mut chunk_model =
-                                        self.terrain.chunk_models[chunk_index].write().unwrap();
-
-                                    chunk_model.update(&self.renderer.queue, &chunk.mesh, 0);
+                                    let updated = self
+                                        .terrain
+                                        .chunks
+                                        .set_block_material(target_pos, material);
+                                    self.terrain.mark_chunks_dirty(&updated);
+                                    println!("Поставили блок в: {:?}", target_pos);
                                 }
-                                println!("Поставили блок в: {:?}", hit.neighbor_position());
                             } else {
                                 println!("Нет блока для установки");
                             }
@@ -205,14 +182,9 @@ impl<'a> State<'a> {
                                 if let Some(block) =
                                     self.terrain.chunks.get_block_material(hit.position)
                                 {
-                                    self.hud.selected_icon = match block {
-                                        MaterialType::ROCK => IconType::ROCK,
-                                        MaterialType::DIRT => IconType::DIRT,
-                                        MaterialType::GRASS => IconType::GRASS,
-                                        _ => self.hud.selected_icon, // Воздух пропускаем
-                                    };
-
-                                    self.hud.update(&self.renderer);
+                                    if let Some(icon) = IconType::from_material(block) {
+                                        self.hud.select_by_icon(icon, &self.renderer);
+                                    }
                                 }
                             } else {
                                 println!("Нет блока для копирования");
@@ -226,27 +198,21 @@ impl<'a> State<'a> {
                     event::MouseScrollDelta::LineDelta(_, y) => {
                         let direction = if y > 0.0 { 1 } else { -1 };
 
-                        self.hud.selected_icon = match direction {
-                            1 => self.hud.selected_icon.next(),  // Колёсико вверх
-                            -1 => self.hud.selected_icon.prev(), // Колёсико вниз
-                            _ => self.hud.selected_icon,         // Защита на неожиданные значения
-                        };
-
-                        self.hud.update(&self.renderer);
+                        match direction {
+                            1 => self.hud.select_next(&self.renderer),
+                            -1 => self.hud.select_prev(&self.renderer),
+                            _ => {}
+                        }
                     }
                     event::MouseScrollDelta::PixelDelta(pos) => {
                         if pos.y > 0.0 {
-                            self.hud.selected_icon = self.hud.selected_icon.next();
+                            self.hud.select_next(&self.renderer);
                         } else if pos.y < 0.0 {
-                            self.hud.selected_icon = self.hud.selected_icon.prev();
+                            self.hud.select_prev(&self.renderer);
                         }
-                        self.hud.update(&self.renderer);
                     }
                 },
 
-                // WindowEvent::MouseWheel { delta, .. } => {
-                //     self.camera.camera_controller.process_scroll(&delta);
-                // },
                 WindowEvent::KeyboardInput {
                     event:
                         KeyEvent {
@@ -272,6 +238,18 @@ impl<'a> State<'a> {
                     self.config.player.mode = self.player.mode.clone();
                     println!("Player mode: {:?}", self.player.mode);
                 }
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(KeyCode::F5),
+                            state: ElementState::Pressed,
+                            ..
+                        },
+                    ..
+                } => {
+                    self.player.toggle_view();
+                    println!("Camera view: {:?}", self.player.view_mode());
+                }
 
                 _ => {}
             }
@@ -282,12 +260,11 @@ impl<'a> State<'a> {
         #[cfg(feature = "tracy")]
         let _span = span!("redraw request"); // <- Начало блока рендера
 
-        let mut now = Instant::now();
+        let now = Instant::now();
         if let Some(target) = self.frame_target {
-            let next_frame_time = self.last_frame_time + target;
-            if now < next_frame_time {
-                thread::sleep(next_frame_time - now);
-                now = Instant::now();
+            if now - self.last_frame_time < target {
+                // Ещё рано рисовать следующий кадр; не блокируем event loop
+                return;
             }
         }
 
@@ -298,8 +275,11 @@ impl<'a> State<'a> {
 
         self.last_frame_time = now;
         self.player.update(elapsed, &self.terrain.chunks);
-        self.terrain
-            .update(&self.renderer.queue, &self.player.camera.position);
+        self.terrain.update(
+            &self.renderer.device,
+            &self.renderer.queue,
+            &self.player.camera.position,
+        );
 
         #[cfg(feature = "tracy")]
         let _inner_span = span!("rendering frame"); // <- Начало участка отрисовки кадра
@@ -323,11 +303,11 @@ impl<'a> State<'a> {
             .render(&self.terrain, &self.hud, &self.globals_bind_group)
         {
             Ok(_) => {}
-            // Reconfigure the surface if lost
+            // Пересоздаём surface, если она потеряна
             Err(wgpu::SurfaceError::Lost) => self.resize(self.renderer.size),
-            // The system is out of memory, we should probably quit
+            // Системе не хватает памяти — выходим
             Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
-            // All other errors (Outdated, Timeout) should be resolved by the next frame
+            // Остальные ошибки (Outdated, Timeout) должны пройти к следующему кадру
             Err(e) => eprintln!("{:?}", e),
         }
     }
@@ -336,7 +316,7 @@ impl<'a> State<'a> {
         let center =
             PhysicalPosition::new(self.renderer.size.width / 2, self.renderer.size.height / 2);
         let _ = self.window.set_cursor_position(center);
-        // Prefer locked grab; fallback to confined when unsupported.
+        // Сначала пробуем захват в режиме Locked, при ошибке — Confined.
         if self.window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
             let _ = self.window.set_cursor_grab(CursorGrabMode::Confined);
         }
@@ -369,9 +349,26 @@ impl<'a> State<'a> {
         self.renderer.update();
 
         let cam_deps = &self.player.camera.dependants;
+        let max_view_distance = (self.config.graphics.render_distance_chunks.max(1) * CHUNK_AREA)
+            as f32;
+        // Приближаем туман: начало примерно с 35% дальности, полная плотность к ~65%.
+        let fog_start = max_view_distance * 0.35;
+        let fog_end = max_view_distance * 0.65;
 
         self.renderer
-            .update_consts(&mut self.data.globals, &[Globals::new(cam_deps.view_proj)])
+            .update_consts(
+                &mut self.data.globals,
+                &[Globals::new(
+                    cam_deps.view_proj,
+                    [
+                        self.player.camera.position.x,
+                        self.player.camera.position.y,
+                        self.player.camera.position.z,
+                    ],
+                    fog_start,
+                    fog_end,
+                )],
+            )
     }
 
     pub fn handle_input_event(&mut self, event: &WindowEvent) -> bool {

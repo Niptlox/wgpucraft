@@ -1,15 +1,15 @@
-/// Identificador único de una entidad en el mundo.
+/// Уникальный идентификатор сущности в мире.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Entity(usize);
 
 impl Entity {
-    /// Crea una nueva entidad con un ID específico.
-    /// (Nota: En la práctica, solo `World` debería poder crear entidades).
+    /// Создаёт сущность с заданным ID.
+    /// (На практике только `World` должен создавать сущности).
     pub fn new(id: usize) -> Self {
         Self(id)
     }
 
-    /// Devuelve el ID numérico de la entidad.
+    /// Возвращает числовой ID сущности.
     pub fn id(&self) -> usize {
         self.0
     }

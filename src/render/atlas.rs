@@ -1,11 +1,12 @@
 use anyhow::*;
+use serde::{Deserialize, Serialize};
 
 use crate::render::texture::*;
 use crate::terrain_gen::block::*;
 
 use super::pipelines::GlobalsLayouts;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MaterialType {
     DIRT,
     GRASS,
@@ -18,9 +19,9 @@ pub enum MaterialType {
 impl MaterialType {
     pub fn is_transparent(&self) -> bool {
         match self {
-            MaterialType::AIR => true,   // Devuelve true si es AIR
-            MaterialType::WATER => true, // Devuelve true si es WATER
-            _ => false,                  // Devuelve false para cualquier otro material
+            MaterialType::AIR => true,   // Возвращает true для AIR
+            MaterialType::WATER => true, // Возвращает true для WATER
+            _ => false,                  // Возвращает false для остальных материалов
         }
     }
 }

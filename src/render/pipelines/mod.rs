@@ -10,26 +10,39 @@ use super::{consts::Consts, texture::Texture};
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Zeroable, Pod)]
 pub struct Globals {
-    /// Transformation from world coordinate space (with focus_off as the
-    /// origin) to the camera space
+    /// Преобразование из мировых координат (с focus_off в качестве начала)
+    /// в координаты камеры.
     view_proj: [[f32; 4]; 4],
+    /// Позиция камеры в мировых координатах (xyz) + паддинг.
+    camera_pos: [f32; 4],
+    /// Начало и конец тумана в мировых единицах (линейная интерполяция).
+    fog: [f32; 4],
 }
 
 impl Globals {
-    /// Create global consts from the provided parameters.
+    /// Создать глобальные константы из переданных параметров.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(view_proj: [[f32; 4]; 4]) -> Self {
-        Self { view_proj }
+    pub fn new(
+        view_proj: [[f32; 4]; 4],
+        camera_pos: [f32; 3],
+        fog_start: f32,
+        fog_end: f32,
+    ) -> Self {
+        Self {
+            view_proj,
+            camera_pos: [camera_pos[0], camera_pos[1], camera_pos[2], 0.0],
+            fog: [fog_start, fog_end, 0.0, 0.0],
+        }
     }
 }
 
 impl Default for Globals {
     fn default() -> Self {
-        Self::new(Matrix4::identity().into())
+        Self::new(Matrix4::identity().into(), [0.0; 3], 0.0, 1.0)
     }
 }
 
-// Global scene data spread across several arrays.
+// Глобальные данные сцены, разбросанные по нескольким буферам.
 pub struct GlobalModel {
     pub globals: Consts<Globals>,
 }
@@ -43,7 +56,7 @@ pub struct GlobalsLayouts {
 impl GlobalsLayouts {
     pub fn base_globals_layout() -> Vec<wgpu::BindGroupLayoutEntry> {
         vec![
-            // Global uniform
+            // Глобальный uniform
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -85,17 +98,17 @@ impl GlobalsLayouts {
             label: Some("atlas_bind_group_layout"),
         });
 
-        // Nuevo layout específico para el HUD (con filtrado)
+        // Отдельный layout для HUD с фильтрацией
         let hud_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
-                // Sampler con filtrado para mejor calidad en UI
+                // Сэмплер с фильтрацией для более чёткой UI
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                // Texture
+                // Текстура
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -113,13 +126,13 @@ impl GlobalsLayouts {
         Self {
             globals,
             atlas_layout,
-            hud_layout, // Añadimos el nuevo layout
+            hud_layout, // Добавляем layout HUD
         }
     }
 
     fn base_global_entries(global_model: &GlobalModel) -> Vec<wgpu::BindGroupEntry> {
         vec![
-            // Global uniform
+            // Глобальный uniform
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: global_model.globals.buf().as_entire_binding(),
@@ -156,12 +169,12 @@ impl GlobalsLayouts {
         bind_group
     }
 
-    // Nueva función para crear bind groups de HUD
+    // Создание bind group для HUD
     pub fn bind_hud_texture(
         &self,
         device: &wgpu::Device,
         texture: &Texture,
-        sampler: Option<&wgpu::Sampler>, // Permite usar un sampler personalizado
+        sampler: Option<&wgpu::Sampler>, // Позволяет передать кастомный сэмплер
     ) -> BindGroup {
         let default_sampler = sampler.unwrap_or(&texture.sampler);
 

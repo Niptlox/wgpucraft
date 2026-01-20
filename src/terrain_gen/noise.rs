@@ -1,5 +1,6 @@
 use noise::{NoiseFn, Perlin};
 
+#[derive(Clone)]
 pub struct NoiseGenerator {
     perlin: Perlin,
 }

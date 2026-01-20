@@ -1,11 +1,11 @@
 use crate::render::{buffer::Buffer, mesh::Mesh};
 
 use super::{Vertex, buffer::DynamicBuffer};
-/// Represents a mesh that has been sent to the GPU.
+/// Меш, отправленный на GPU.
 pub struct Model<V: Vertex> {
     vbuf: Buffer<V>,
-    ibuf: Buffer<u16>,
-    pub num_indices: u16,
+    ibuf: Buffer<u32>,
+    pub num_indices: u32,
 }
 
 impl<V: Vertex> Model<V> {
@@ -20,7 +20,7 @@ impl<V: Vertex> Model<V> {
         Some(Self {
             vbuf,
             ibuf,
-            num_indices: mesh.indices().len() as u16,
+            num_indices: mesh.indices().len() as u32,
         })
     }
 
@@ -35,26 +35,69 @@ impl<V: Vertex> Model<V> {
     }
 }
 
-/// Represents a mesh that has been sent to the GPU.
+/// Меш, отправленный на GPU, с возможностью перевыделения буферов.
 pub struct DynamicModel<V: Vertex> {
     vbuf: DynamicBuffer<V>,
-    ibuf: DynamicBuffer<u16>,
-    pub num_indices: u16,
+    ibuf: DynamicBuffer<u32>,
+    pub num_indices: u32,
+    v_capacity: usize,
+    i_capacity: usize,
+    v_usage: wgpu::BufferUsages,
+    i_usage: wgpu::BufferUsages,
 }
 
 impl<V: Vertex> DynamicModel<V> {
-    pub fn new(device: &wgpu::Device, size: usize) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        vertex_capacity: usize,
+        index_capacity: usize,
+    ) -> Self {
+        let v_usage = wgpu::BufferUsages::VERTEX;
+        let i_usage = wgpu::BufferUsages::INDEX;
         Self {
-            vbuf: DynamicBuffer::new(device, size, wgpu::BufferUsages::VERTEX),
-            ibuf: DynamicBuffer::new(device, size, wgpu::BufferUsages::INDEX),
+            vbuf: DynamicBuffer::new(device, vertex_capacity, v_usage),
+            ibuf: DynamicBuffer::new(device, index_capacity, i_usage),
             num_indices: 0,
+            v_capacity: vertex_capacity.max(1),
+            i_capacity: index_capacity.max(1),
+            v_usage,
+            i_usage,
         }
     }
 
-    pub fn update(&mut self, queue: &wgpu::Queue, mesh: &Mesh<V>, offset: usize) {
-        self.vbuf.update(queue, mesh.vertices(), offset);
-        self.ibuf.update(queue, mesh.indices(), offset);
-        self.num_indices = mesh.indices().len() as u16;
+    fn ensure_capacity(&mut self, device: &wgpu::Device, verts: usize, indices: usize) {
+        if verts > self.v_capacity {
+            let new_cap = verts.next_power_of_two();
+            self.vbuf = DynamicBuffer::new(device, new_cap, self.v_usage);
+            self.v_capacity = new_cap;
+        }
+        if indices > self.i_capacity {
+            let new_cap = indices.next_power_of_two();
+            self.ibuf = DynamicBuffer::new(device, new_cap, self.i_usage);
+            self.i_capacity = new_cap;
+        }
+    }
+
+    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, mesh: &Mesh<V>) {
+        self.ensure_capacity(device, mesh.vertices().len(), mesh.indices().len());
+        self.vbuf.update(queue, mesh.vertices(), 0);
+        self.ibuf.update(queue, mesh.indices(), 0);
+        self.num_indices = mesh.indices().len() as u32;
+    }
+
+    /// Уменьшить буферы при возврате в пул, сохранив минимальный размер, чтобы избежать дёрганья.
+    pub fn shrink_to(&mut self, device: &wgpu::Device, min_v: usize, min_i: usize) {
+        let target_v = min_v.max(1).next_power_of_two();
+        let target_i = min_i.max(1).next_power_of_two();
+        if self.v_capacity > target_v {
+            self.vbuf = DynamicBuffer::new(device, target_v, self.v_usage);
+            self.v_capacity = target_v;
+        }
+        if self.i_capacity > target_i {
+            self.ibuf = DynamicBuffer::new(device, target_i, self.i_usage);
+            self.i_capacity = target_i;
+        }
+        self.num_indices = 0;
     }
 
     pub fn vbuf(&self) -> &wgpu::Buffer {

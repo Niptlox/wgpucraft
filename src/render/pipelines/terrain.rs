@@ -31,14 +31,14 @@ pub fn create_terrain_pipeline(
     device: &wgpu::Device,
     global_layout: &GlobalsLayouts,
     shader: wgpu::ShaderModule,
-    config: &wgpu::SurfaceConfiguration, //in the future i better add a config struct global
+    config: &wgpu::SurfaceConfiguration,
 ) -> RenderPipeline {
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Figure Pipeline Layout"),
         bind_group_layouts: &[
             &global_layout.atlas_layout,
             &global_layout.globals,
-            // pendiente agregar layout con algo relacionado del terreno
+            // Здесь позже можно добавить layout, связанный с параметрами террейна
         ],
         push_constant_ranges: &[],
     });
@@ -51,11 +51,11 @@ pub fn create_terrain_pipeline(
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: Some(wgpu::Face::Back),
-            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+            // Значения, отличные от Fill, требуют Features::NON_FILL_POLYGON_MODE
             polygon_mode: wgpu::PolygonMode::Fill,
-            // Requires Features::DEPTH_CLIP_CONTROL
+            // Требуется Features::DEPTH_CLIP_CONTROL
             unclipped_depth: false,
-            // Requires Features::CONSERVATIVE_RASTERIZATION
+            // Требуется Features::CONSERVATIVE_RASTERIZATION
             conservative: false,
         },
         vertex: wgpu::VertexState {

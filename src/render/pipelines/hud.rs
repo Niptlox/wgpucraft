@@ -6,8 +6,8 @@ use crate::render::{Vertex, texture::Texture};
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct HUDVertex {
-    pub position: [f32; 2], // Posición en espacio de pantalla (coordenadas normalizadas)
-    pub uv: [f32; 2],       // Coordenadas de textura
+    pub position: [f32; 2], // Позиция в экранных координатах (нормализованных)
+    pub uv: [f32; 2],       // Текстурные координаты
 }
 
 impl HUDVertex {
@@ -30,7 +30,7 @@ pub fn create_hud_pipeline(
     device: &wgpu::Device,
     global_layout: &GlobalsLayouts,
     shader: wgpu::ShaderModule,
-    config: &wgpu::SurfaceConfiguration, //in the future i better add a config struct global
+    config: &wgpu::SurfaceConfiguration,
 ) -> RenderPipeline {
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Figure Pipeline Layout"),
@@ -57,7 +57,7 @@ pub fn create_hud_pipeline(
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
-                // Configuración avanzada de blending para transparencias
+                // Расширенная настройка блендинга для прозрачности
                 blend: Some(wgpu::BlendState {
                     color: wgpu::BlendComponent {
                         src_factor: wgpu::BlendFactor::SrcAlpha,

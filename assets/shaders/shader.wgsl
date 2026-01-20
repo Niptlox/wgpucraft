@@ -1,6 +1,10 @@
 // Vertex shader
 struct CameraUniform {
     view_proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+    fog_start: f32,
+    fog_end: f32,
+    _pad: vec2<f32>,
 };
 @group(1) @binding(0) // 1.
 var<uniform> camera: CameraUniform;
@@ -13,6 +17,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) tex_coords: vec2<f32>,
+    @location(1) view_dist: f32,
 }
 
 @vertex
@@ -22,6 +27,7 @@ fn vs_main(
     var out: VertexOutput;
     out.tex_coords = vertex.tex_coords;
     out.clip_position = camera.view_proj * vec4<f32>(vertex.position, 1.0);
+    out.view_dist = distance(vertex.position, camera.camera_pos.xyz);
     return out;
 }
 // Fragment shader
@@ -33,6 +39,14 @@ var s_diffuse: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let base_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    // World-space distance based fog.
+    let fog_factor = clamp(
+        (in.view_dist - camera.fog_start) / (camera.fog_end - camera.fog_start),
+        0.0,
+        1.0,
+    );
+    let fog_color = vec3<f32>(0.65, 0.78, 0.88);
+    return vec4<f32>(mix(base_color.rgb, fog_color, fog_factor), base_color.a);
 }
  

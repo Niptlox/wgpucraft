@@ -1,24 +1,22 @@
 use crate::render::buffer::DynamicBuffer;
 use bytemuck::Pod;
 
-// A handle to a series of variables sitting on the GPU. This is used to hold
-// information used in the rendering process that does not change throughout a
-// single render pass.
+// Хэндл для набора значений на GPU, которые не меняются в течение одного render pass.
 
 pub struct Consts<T: Copy + Pod> {
     buf: DynamicBuffer<T>,
 }
 
 impl<T: Copy + Pod> Consts<T> {
-    // Create a new `Const<T>`.
+    // Создать новый `Const<T>`.
     pub fn new(device: &wgpu::Device, len: usize) -> Self {
         Self {
-            // TODO: examine if all our consts need to be updatable
+            // TODO: проверить, все ли константы должны уметь обновляться
             buf: DynamicBuffer::new(device, len, wgpu::BufferUsages::UNIFORM),
         }
     }
 
-    // Update the GPU-side value represented by this constant handle.
+    // Обновить значение на стороне GPU, связанное с этим хэндлом.
     pub fn update(&mut self, queue: &wgpu::Queue, vals: &[T], offset: usize) {
         self.buf.update(queue, vals, offset)
     }
@@ -28,5 +26,4 @@ impl<T: Copy + Pod> Consts<T> {
     }
 }
 
-// Note: The reason why a const is updated, is because the values are const per render pass
-// this means they do not change at one single render pass, but they can change for the next render pass
+// Константы неизменны в пределах одного render pass, но могут меняться к следующему.
