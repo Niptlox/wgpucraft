@@ -8,7 +8,7 @@ use bytemuck::Pod;
 pub struct Consts<T: Copy + Pod> {
     buf: DynamicBuffer<T>,
 }
- 
+
 impl<T: Copy + Pod> Consts<T> {
     // Create a new `Const<T>`.
     pub fn new(device: &wgpu::Device, len: usize) -> Self {
@@ -23,9 +23,10 @@ impl<T: Copy + Pod> Consts<T> {
         self.buf.update(queue, vals, offset)
     }
 
-    pub fn buf(&self) -> &wgpu::Buffer { &self.buf.buff }
+    pub fn buf(&self) -> &wgpu::Buffer {
+        &self.buf.buff
+    }
 }
 
 // Note: The reason why a const is updated, is because the values are const per render pass
 // this means they do not change at one single render pass, but they can change for the next render pass
-

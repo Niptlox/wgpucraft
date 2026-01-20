@@ -1,21 +1,18 @@
 use std::sync::{Arc, RwLock};
 
-
 use cgmath::Vector3;
+#[cfg(feature = "tracy")]
 use tracy_client::span;
-
 
 use crate::render::{atlas::MaterialType, mesh::Mesh, pipelines::terrain::BlockVertex};
 
-
-use super::{biomes::BiomeParameters, block::{self, Block}, generator::LAND_LEVEL, noise::NoiseGenerator};
-
+use super::{biomes::BiomeParameters, block::Block, generator::LAND_LEVEL, noise::NoiseGenerator};
 
 pub const CHUNK_Y_SIZE: usize = 100;
 pub const CHUNK_AREA: usize = 16;
-pub const CHUNK_AREA_WITH_PADDING: usize = CHUNK_AREA + 2; // +1 en cada lado
-pub const TOTAL_CHUNK_SIZE: usize = CHUNK_Y_SIZE * CHUNK_AREA_WITH_PADDING * CHUNK_AREA_WITH_PADDING;
-
+pub const CHUNK_AREA_WITH_PADDING: usize = CHUNK_AREA + 2; // +1 с каждой стороны для паддинга
+pub const TOTAL_CHUNK_SIZE: usize =
+    CHUNK_Y_SIZE * CHUNK_AREA_WITH_PADDING * CHUNK_AREA_WITH_PADDING;
 
 pub struct Chunk {
     pub blocks: Vec<Block>,
@@ -25,43 +22,43 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(offset: [i32; 3]) -> Self {
-    let mut blocks = Vec::with_capacity(TOTAL_CHUNK_SIZE);
+        let mut blocks = Vec::with_capacity(TOTAL_CHUNK_SIZE);
 
-    for y in 0..CHUNK_Y_SIZE {
-        for x in 0..CHUNK_AREA_WITH_PADDING {
-            for z in 0..CHUNK_AREA_WITH_PADDING {
-                let position = Vector3 {
-                    x: x as i32 - 1,  // -1 para el padding izquierdo
-                    y: y as i32,
-                    z: z as i32 - 1,  // -1 para el padding frontal
-                };
+        for y in 0..CHUNK_Y_SIZE {
+            for x in 0..CHUNK_AREA_WITH_PADDING {
+                for z in 0..CHUNK_AREA_WITH_PADDING {
+                    let position = Vector3 {
+                        x: x as i32 - 1, // -1 для левого паддинга
+                        y: y as i32,
+                        z: z as i32 - 1, // -1 для фронтального паддинга
+                    };
 
-                let material_type = if y < 12 {
-                    MaterialType::DEBUG
-                } else if y == 12 {
-                    MaterialType::DEBUG
-                } else {
-                    MaterialType::AIR
-                };
+                    let material_type = if y < 12 {
+                        MaterialType::DEBUG
+                    } else if y == 12 {
+                        MaterialType::DEBUG
+                    } else {
+                        MaterialType::AIR
+                    };
 
-                blocks.push(Block::new(material_type, position.into(), offset));
+                    blocks.push(Block::new(material_type, position.into(), offset));
+                }
             }
         }
-    }
         let mesh = Mesh::new();
-        Chunk { blocks, offset, mesh }
+        Chunk {
+            blocks,
+            offset,
+            mesh,
+        }
     }
 
-
-    /// Calcula el índice lineal basado en coordenadas y, x, z
+    /// Линейный индекс внутри чанка по координатам y, x, z
     fn calculate_index(&self, y: usize, x: usize, z: usize) -> usize {
-        y * (CHUNK_AREA_WITH_PADDING * CHUNK_AREA_WITH_PADDING) + 
-        x * CHUNK_AREA_WITH_PADDING + 
-        z
+        y * (CHUNK_AREA_WITH_PADDING * CHUNK_AREA_WITH_PADDING) + x * CHUNK_AREA_WITH_PADDING + z
     }
 
-
-    /// Obtiene una referencia inmutable a un bloque
+    /// Получить ссылку на блок (immut)
     pub fn get_block(&self, y: usize, x: usize, z: usize) -> Option<&Block> {
         if y < CHUNK_Y_SIZE && x < CHUNK_AREA_WITH_PADDING && z < CHUNK_AREA_WITH_PADDING {
             let index = self.calculate_index(y, x, z);
@@ -71,7 +68,7 @@ impl Chunk {
         }
     }
 
-    /// Obtiene una referencia mutable a un bloque
+    /// Получить изменяемый блок
     pub fn get_block_mut(&mut self, y: usize, x: usize, z: usize) -> Option<&mut Block> {
         if y < CHUNK_Y_SIZE && x < CHUNK_AREA_WITH_PADDING && z < CHUNK_AREA_WITH_PADDING {
             let index = self.calculate_index(y, x, z);
@@ -81,37 +78,46 @@ impl Chunk {
         }
     }
 
+    pub fn update_blocks(
+        &mut self,
+        offset: [i32; 3],
+        noise_generator: &NoiseGenerator,
+        biome: &BiomeParameters,
+    ) {
+        #[cfg(feature = "tracy")]
+        let _span = span!("generate chunk: full scope"); // Замер генерации чанка
 
-    pub fn update_blocks(&mut self, offset: [i32; 3], noise_generator: &NoiseGenerator, biome: &BiomeParameters) {
-        let _span = span!("generate chunk: full scope"); // Span por hilo
-
-        self.offset = offset; // Actualizamos el offset del chunk
+        self.offset = offset; // Сохраняем смещение чанка
 
         let max_biome_height = (biome.base_height + biome.amplitude) as usize;
-
 
         for y in 0..CHUNK_Y_SIZE {
             for x in 0..CHUNK_AREA_WITH_PADDING {
                 for z in 0..CHUNK_AREA_WITH_PADDING {
-
                     if y > max_biome_height {
-                        continue; // Saltamos al siguiente bloque
+                        continue; // Пропускаем высоту выше биома
                     }
+                    #[cfg(feature = "tracy")]
+                    let _inner_span = span!(" creating single block");
 
-                    let _inner_span = span!(" creating single block"); 
-
-                    if y < (biome.base_height - 1.0) as usize  {
-                        self.get_block_mut(y, x, z).unwrap()
-                        .update(MaterialType::DIRT, offset);
+                    if y < (biome.base_height - 1.0) as usize {
+                        self.get_block_mut(y, x, z)
+                            .unwrap()
+                            .update(MaterialType::DIRT, offset);
                         continue;
                     }
 
                     let local_x = x as i32 - 1;
                     let local_z = z as i32 - 1;
-                    let world_pos = local_pos_to_world(self.offset, Vector3::new(local_x, y as i32, local_z));
-                    let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
+                    let world_pos =
+                        local_pos_to_world(self.offset, Vector3::new(local_x, y as i32, local_z));
+                    let height_variation = noise_generator.get_height(
+                        world_pos.x as f32,
+                        world_pos.z as f32,
+                        biome.frequency,
+                        biome.amplitude,
+                    );
                     let new_height = (biome.base_height + height_variation).round() as usize;
-
 
                     //let new_height = y;
 
@@ -128,37 +134,36 @@ impl Chunk {
                     } else {
                         MaterialType::DIRT
                     };
-                    self.get_block_mut(y, x, z).unwrap().update(block_type, offset);
+                    self.get_block_mut(y, x, z)
+                        .unwrap()
+                        .update(block_type, offset);
                 }
             }
-        };
+        }
     }
-
 
     pub fn update_mesh(&mut self, biome: BiomeParameters) {
         let mut verts = Vec::new();
         let mut indices = Vec::new();
 
         let max_biome_height = (biome.base_height + biome.amplitude) as usize;
+        #[cfg(feature = "tracy")]
+        let _span = span!(" update chunk mesh"); // Замер построения меша
 
-        let _span = span!(" update chunk mesh"); // Span por hilo
-
-
-        
-        // Iterar solo sobre el área interna (1..CHUNK_AREA+1 para saltar el padding)
+        // Итерируемся только по внутренней области (1..CHUNK_AREA+1 исключает паддинг)
         for y in 0..CHUNK_Y_SIZE {
             for x in 1..=CHUNK_AREA {
                 for z in 1..=CHUNK_AREA {
-
                     if y > max_biome_height {
                         continue;
                     }
-                    let _inner_span = span!("procesing block vertices"); // Span por hilo
+                    #[cfg(feature = "tracy")]
+                    let _inner_span = span!("processing block vertices"); // Замер вершин блока
 
                     let block = self.get_block(y, x, z).unwrap();
                     let mut block_vertices = Vec::with_capacity(4 * 6);
                     let mut block_indices: Vec<u16> = Vec::with_capacity(6 * 6);
-                    
+
                     if block.material_type as i32 == MaterialType::AIR as i32 {
                         continue;
                     }
@@ -166,7 +171,8 @@ impl Chunk {
                     let mut quad_counter = 0;
 
                     for quad in block.quads.iter() {
-                        let neighbor_pos: Vector3<i32> = block.get_vec_position() + quad.side.to_vec();
+                        let neighbor_pos: Vector3<i32> =
+                            block.get_vec_position() + quad.side.to_vec();
                         let visible = self.is_quad_visible(&neighbor_pos);
 
                         if visible {
@@ -175,8 +181,11 @@ impl Chunk {
                             quad_counter += 1;
                         }
                     }
-                    
-                    block_indices = block_indices.iter().map(|i| i + verts.len() as u16).collect();
+
+                    block_indices = block_indices
+                        .iter()
+                        .map(|i| i + verts.len() as u16)
+                        .collect();
                     verts.extend(block_vertices);
                     indices.extend(block_indices);
                 }
@@ -186,29 +195,21 @@ impl Chunk {
         self.mesh = Mesh { verts, indices };
     }
 
-
-
     fn is_quad_visible(&self, neighbor_pos: &Vector3<i32>) -> bool {
         if pos_in_chunk_bounds(*neighbor_pos) {
-            // Convertir coordenadas (-1..16) a índices de array (0..17)
+            // Преобразуем координаты (-1..16) в индексы массива (0..17)
 
             let x_index = (neighbor_pos.x + 1) as usize;
             let y_index = neighbor_pos.y as usize;
             let z_index = (neighbor_pos.z + 1) as usize;
-            
+
             let neighbor_block = self.get_block(y_index, x_index, z_index).unwrap();
             return neighbor_block.material_type as u16 == MaterialType::AIR as u16;
         } else {
             return false;
         }
     }
-
-
 }
-
-
-
-
 
 pub struct ChunkManager {
     pub chunks: Vec<Arc<RwLock<Chunk>>>,
@@ -216,9 +217,7 @@ pub struct ChunkManager {
 
 impl ChunkManager {
     pub fn new() -> Self {
-        ChunkManager {
-            chunks: Vec::new(),
-        }
+        ChunkManager { chunks: Vec::new() }
     }
 
     pub fn add_chunk(&mut self, chunk: Chunk) {
@@ -234,47 +233,53 @@ impl ChunkManager {
     }
 
     pub fn get_chunk_index_by_offset(&self, offset: &[i32; 3]) -> Option<usize> {
-        self.chunks.iter().position(|chunk| {
-            chunk.read().unwrap().offset == *offset
-        })
+        self.chunks
+            .iter()
+            .position(|chunk| chunk.read().unwrap().offset == *offset)
     }
 
-
-    
-    // Obtiene el material de un bloque en una posición mundial
+    // Получить материал блока в мировых координатах
     pub fn get_block_material(&self, world_pos: Vector3<i32>) -> Option<MaterialType> {
         let (chunk_offset, local_pos) = world_pos_to_chunk_and_local(world_pos);
-        
-        // Ajustamos para el padding (local_pos es 0..15, necesitamos -1..16)
+
+        // Учитываем паддинг (local_pos 0..15 -> нужно -1..16)
         let x = local_pos.x + 1;
         let z = local_pos.z + 1;
         let y = local_pos.y;
-        
+
         if !pos_in_chunk_bounds(Vector3::new(x, y, z)) {
             return None;
         }
-        
+
         self.get_chunk_index_by_offset(&chunk_offset)
             .and_then(|index| {
                 let chunk = self.chunks[index].read().unwrap();
-                Some(chunk.get_block(y as usize, x as usize, z as usize)?.material_type)
+                Some(
+                    chunk
+                        .get_block(y as usize, x as usize, z as usize)?
+                        .material_type,
+                )
             })
     }
 
-    // Establece el material de un bloque en una posición mundial
-    pub fn set_block_material(&mut self, world_pos: Vector3<i32>, material: MaterialType) -> Option<usize> {
+    // Установить материал блока в мировых координатах
+    pub fn set_block_material(
+        &mut self,
+        world_pos: Vector3<i32>,
+        material: MaterialType,
+    ) -> Option<usize> {
         let (chunk_offset, local_pos) = world_pos_to_chunk_and_local(world_pos);
-        
-        // Ajustamos para el padding (local_pos es 0..15, necesitamos -1..16)
+
+        // Учитываем паддинг (local_pos 0..15 -> нужно -1..16)
         let x = local_pos.x + 1;
         let z = local_pos.z + 1;
         let y = local_pos.y;
-        
+
         if !pos_in_chunk_bounds(Vector3::new(x, y, z)) {
             println!("Position out of bounds: {:?}", world_pos);
             return None;
         }
-        
+
         if let Some(index) = self.get_chunk_index_by_offset(&chunk_offset) {
             let mut chunk = self.chunks[index].write().unwrap();
             let block = chunk.get_block_mut(y as usize, x as usize, z as usize)?;
@@ -286,41 +291,37 @@ impl ChunkManager {
             return None;
         }
     }
-
-    
 }
-
-
-
-
-
-
 
 pub fn pos_in_chunk_bounds(pos: Vector3<i32>) -> bool {
-    // Ahora acepta posiciones desde -1 hasta CHUNK_AREA (0..15 es el área interna, -1 y 16 son padding)
-    pos.x >= -1 && pos.y >= 0 && pos.z >= -1 &&
-    pos.x <= CHUNK_AREA as i32 && 
-    pos.y < CHUNK_Y_SIZE as i32 && 
-    pos.z <= CHUNK_AREA as i32
+    // Допускаем координаты от -1 до CHUNK_AREA (0..15 внутренняя область, -1 и 16 — паддинг)
+    pos.x >= -1
+        && pos.y >= 0
+        && pos.z >= -1
+        && pos.x <= CHUNK_AREA as i32
+        && pos.y < CHUNK_Y_SIZE as i32
+        && pos.z <= CHUNK_AREA as i32
 }
-
 
 fn world_pos_to_chunk_and_local(world_pos: Vector3<i32>) -> ([i32; 3], Vector3<i32>) {
     let chunk_x = world_pos.x.div_euclid(CHUNK_AREA as i32);
     let chunk_y = world_pos.y.div_euclid(CHUNK_Y_SIZE as i32);
     let chunk_z = world_pos.z.div_euclid(CHUNK_AREA as i32);
-    
+
     let local_x = world_pos.x.rem_euclid(CHUNK_AREA as i32);
     let local_y = world_pos.y.rem_euclid(CHUNK_Y_SIZE as i32);
     let local_z = world_pos.z.rem_euclid(CHUNK_AREA as i32);
-    
-    ([chunk_x, chunk_y, chunk_z], Vector3::new(local_x, local_y, local_z))
+
+    (
+        [chunk_x, chunk_y, chunk_z],
+        Vector3::new(local_x, local_y, local_z),
+    )
 }
 
-pub fn local_pos_to_world(offset:[i32;3], local_pos: Vector3<i32>) -> Vector3<f32> {
+pub fn local_pos_to_world(offset: [i32; 3], local_pos: Vector3<i32>) -> Vector3<f32> {
     Vector3::new(
         local_pos.x as f32 + (offset[0] as f32 * CHUNK_AREA as f32),
         local_pos.y as f32 + (offset[1] as f32 * CHUNK_AREA as f32),
-        local_pos.z as f32 + (offset[2] as f32 * CHUNK_AREA as f32)
+        local_pos.z as f32 + (offset[2] as f32 * CHUNK_AREA as f32),
     )
 }

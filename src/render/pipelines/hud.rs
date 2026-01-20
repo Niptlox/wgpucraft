@@ -1,15 +1,13 @@
-
-
 use wgpu::RenderPipeline;
 
 use super::GlobalsLayouts;
-use crate::render::{texture::Texture, Vertex};
+use crate::render::{Vertex, texture::Texture};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct HUDVertex {
-    pub position: [f32; 2],  // Posición en espacio de pantalla (coordenadas normalizadas)
-    pub uv: [f32; 2],        // Coordenadas de textura
+    pub position: [f32; 2], // Posición en espacio de pantalla (coordenadas normalizadas)
+    pub uv: [f32; 2],       // Coordenadas de textura
 }
 
 impl HUDVertex {
@@ -32,24 +30,18 @@ pub fn create_hud_pipeline(
     device: &wgpu::Device,
     global_layout: &GlobalsLayouts,
     shader: wgpu::ShaderModule,
-    config: &wgpu::SurfaceConfiguration,//in the future i better add a config struct global
+    config: &wgpu::SurfaceConfiguration, //in the future i better add a config struct global
 ) -> RenderPipeline {
-
-    let pipeline_layout =
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Figure Pipeline Layout"),
-        bind_group_layouts: &[
-            &global_layout.hud_layout,
-            &global_layout.globals,
-
-        ],  
+        bind_group_layouts: &[&global_layout.hud_layout, &global_layout.globals],
         push_constant_ranges: &[],
     });
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render generic Pipeline"),
         layout: Some(&pipeline_layout),
-        primitive: wgpu::PrimitiveState { 
+        primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
             ..Default::default()
@@ -99,7 +91,4 @@ pub fn create_hud_pipeline(
     });
 
     pipeline
-
 }
-
-

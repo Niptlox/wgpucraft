@@ -18,18 +18,19 @@ pub enum MaterialType {
 impl MaterialType {
     pub fn is_transparent(&self) -> bool {
         match self {
-            MaterialType::AIR => true, // Devuelve true si es AIR
+            MaterialType::AIR => true,   // Devuelve true si es AIR
             MaterialType::WATER => true, // Devuelve true si es WATER
-            _ => false, // Devuelve false para cualquier otro material
+            _ => false,                  // Devuelve false para cualquier otro material
         }
     }
 }
 
-
-
-
 impl MaterialType {
-    pub fn get_texture_coordinates(&self, texture_corner: [u32; 2], quad_side: Direction) -> [f32; 2] {
+    pub fn get_texture_coordinates(
+        &self,
+        texture_corner: [u32; 2],
+        quad_side: Direction,
+    ) -> [f32; 2] {
         match self {
             MaterialType::GRASS => match quad_side {
                 Direction::TOP => atlas_pos_to_coordinates([0.0, 0.0], texture_corner),
@@ -69,12 +70,14 @@ fn atlas_pos_to_coordinates(atlas_pos: [f32; 2], texture_corner: [u32; 2]) -> [f
 pub struct Atlas {
     pub texture: Texture,
     pub bind_group: wgpu::BindGroup,
-
 }
 
 impl Atlas {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, layouts: &GlobalsLayouts) -> Result<Self> {
-
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layouts: &GlobalsLayouts,
+    ) -> Result<Self> {
         let diffuse_bytes = include_bytes!("../../assets/images/textures_atlas.png");
         let texture = Texture::from_bytes(&device, &queue, diffuse_bytes, "blocks.png").unwrap();
 

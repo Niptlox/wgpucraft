@@ -1,0 +1,42 @@
+{
+  "input": {
+    "mouse_sensitivity": 0.35,
+    "invert_y": false,
+    "move_speed": 12.0,
+    "fly_speed": 18.0
+  },
+  "graphics": {
+    "fps_cap": 60,
+    "vsync": true,
+    "render_distance_chunks": 10,
+    "fov_y_degrees": 60.0
+  },
+  "world": {
+    "seed": 10
+  },
+  "multiplayer": {
+    "ip": "127.0.0.1",
+    "port": 7777,
+    "player_name": "Player",
+    "head_color": [
+      0.1,
+      0.6,
+      0.9
+    ],
+    "tick_rate": 20
+  },
+  "debug": {
+    "show_overlay": true,
+    "show_fps": true,
+    "wireframe": false
+  },
+  "player": {
+    "mode": "adventure",
+    "gravity": 28.0,
+    "jump_speed": 12.0,
+    "height": 1.8,
+    "radius": 0.35,
+    "eye_height": 1.6,
+    "max_fall_speed": 48.0
+  }
+}

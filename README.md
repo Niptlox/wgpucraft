@@ -2,6 +2,10 @@
 
 ## Why another minecraft clone?
 
+```sh
+cargo build --release --target x86_64-pc-windows-msvc
+```
+
 There will never be enough minecraft clones out there! if i really consider myself a game developer even as a hobbyist (for now), a minecraft clone is a must step i have to take!
 
 ## What's different about this minecraft clone?

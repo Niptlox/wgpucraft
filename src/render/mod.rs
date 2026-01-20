@@ -1,14 +1,12 @@
-pub mod renderer;
-pub mod pipelines;
-pub mod texture;
 pub mod atlas;
-pub mod mesh;
-pub mod model;
+pub mod binding;
 pub mod buffer;
 pub mod consts;
-pub mod binding;
-
-
+pub mod mesh;
+pub mod model;
+pub mod pipelines;
+pub mod renderer;
+pub mod texture;
 
 pub trait Vertex: Copy + bytemuck::Pod {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a>;

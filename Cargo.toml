@@ -3,6 +3,11 @@ name = "wgpucraft"
 version = "0.1.0"
 edition = "2024"
 
+
+[features]
+default = []  # без tracy по умолчанию
+tracy = ["dep:tracy-client", "dep:tracing-tracy"]  # флаг для включения
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -24,8 +29,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 pollster = "0.3.0"
 
-tracy-client = "0.18.0"
-tracing-tracy = "0.11.4"
+# tracy-client = { version = "0.18", default-features = false }
+# tracing-tracy = "0.11.4"
+# Tracy только через feature
+tracy-client = { version = "0.18", default-features = false, optional = true }
+tracing-tracy = { version = "0.11.4", optional = true }
 
 
 [dependencies.image]

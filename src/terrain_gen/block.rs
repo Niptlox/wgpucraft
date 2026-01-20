@@ -6,9 +6,13 @@ use crate::render::pipelines::terrain::BlockVertex;
 
 use super::chunk::CHUNK_AREA;
 
-
-
-pub fn quad_vertex(pos: [i8; 3], material_type: MaterialType, texture_corners: [u32; 2], position: [i32; 3], quad_side: Direction) -> BlockVertex {
+pub fn quad_vertex(
+    pos: [i8; 3],
+    material_type: MaterialType,
+    texture_corners: [u32; 2],
+    position: [i32; 3],
+    quad_side: Direction,
+) -> BlockVertex {
     let tc = material_type.get_texture_coordinates(texture_corners, quad_side);
     BlockVertex {
         pos: [
@@ -31,12 +35,15 @@ pub enum Direction {
 }
 
 impl Direction {
-
     pub const ALL: [Self; 6] = [
-            Self::TOP, Self::BOTTOM, Self::RIGHT,
-            Self::LEFT, Self::FRONT, Self::BACK
-        ];
-    
+        Self::TOP,
+        Self::BOTTOM,
+        Self::RIGHT,
+        Self::LEFT,
+        Self::FRONT,
+        Self::BACK,
+    ];
+
     pub fn to_vec(self) -> Vector3<i32> {
         match self {
             Direction::TOP => Vector3::new(0, 1, 0),
@@ -133,7 +140,7 @@ pub struct Block {
     pub quads: [Quad; 6],
     pub position: [i32; 3],
     pub material_type: MaterialType,
-    chunk_offset: [i32; 3]
+    chunk_offset: [i32; 3],
 }
 
 impl Block {
@@ -144,7 +151,7 @@ impl Block {
             quads,
             position,
             material_type,
-            chunk_offset
+            chunk_offset,
         }
     }
 
@@ -156,7 +163,7 @@ impl Block {
         !self.is_transparent()
     }
 
-    pub fn get_vec_position(&self) -> Vector3<i32>{
+    pub fn get_vec_position(&self) -> Vector3<i32> {
         Vector3::new(self.position[0], self.position[1], self.position[2])
     }
 
@@ -169,7 +176,11 @@ impl Block {
         ]
     }
 
-    fn generate_quads(material_type: MaterialType, position: [i32; 3], chunk_offset: [i32; 3]) -> [Quad; 6] {
+    fn generate_quads(
+        material_type: MaterialType,
+        position: [i32; 3],
+        chunk_offset: [i32; 3],
+    ) -> [Quad; 6] {
         let world_pos = [
             position[0] + (chunk_offset[0] * CHUNK_AREA as i32),
             position[1],
@@ -193,14 +204,13 @@ impl Block {
     }
 }
 
-
 impl Default for Block {
     fn default() -> Self {
         Block {
             quads: [Quad::new(MaterialType::AIR, Direction::TOP, [0, 0, 0]); 6],
             position: [0, 0, 0],
             material_type: MaterialType::AIR,
-            chunk_offset: [0, 0, 0]
+            chunk_offset: [0, 0, 0],
         }
     }
 }

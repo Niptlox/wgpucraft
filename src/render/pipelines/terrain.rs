@@ -2,8 +2,7 @@ use wgpu::RenderPipeline;
 
 use super::GlobalsLayouts;
 
-
-use crate::render::{texture::Texture, Vertex};
+use crate::render::{Vertex, texture::Texture};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -13,15 +12,11 @@ pub struct BlockVertex {
 }
 
 impl BlockVertex {
-
     const ATTRIBS: [wgpu::VertexAttribute; 2] =
         wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
-
 }
 
 impl Vertex for BlockVertex {
-
-    
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         use std::mem;
         wgpu::VertexBufferLayout {
@@ -32,16 +27,13 @@ impl Vertex for BlockVertex {
     }
 }
 
-
 pub fn create_terrain_pipeline(
     device: &wgpu::Device,
     global_layout: &GlobalsLayouts,
     shader: wgpu::ShaderModule,
-    config: &wgpu::SurfaceConfiguration,//in the future i better add a config struct global
+    config: &wgpu::SurfaceConfiguration, //in the future i better add a config struct global
 ) -> RenderPipeline {
-
-    let pipeline_layout =
-    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Figure Pipeline Layout"),
         bind_group_layouts: &[
             &global_layout.atlas_layout,
@@ -54,7 +46,7 @@ pub fn create_terrain_pipeline(
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render generic Pipeline"),
         layout: Some(&pipeline_layout),
-        primitive: wgpu::PrimitiveState { 
+        primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
@@ -99,5 +91,4 @@ pub fn create_terrain_pipeline(
     });
 
     pipeline
-
 }

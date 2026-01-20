@@ -1,8 +1,9 @@
-
-use cgmath::{InnerSpace, Vector3};
-use crate::{render::atlas::MaterialType, terrain_gen::{block::Direction, chunk::ChunkManager}};
 use super::camera::Camera;
-
+use crate::{
+    render::atlas::MaterialType,
+    terrain_gen::{block::Direction, chunk::ChunkManager},
+};
+use cgmath::{InnerSpace, Vector3};
 
 pub struct Ray {
     pub origin: cgmath::Point3<f32>,
@@ -16,13 +17,11 @@ pub struct BlockHit {
     pub distance: f32,
 }
 
-
 impl BlockHit {
     pub fn neighbor_position(&self) -> Vector3<i32> {
         self.position + self.face.to_vec()
     }
 }
-
 
 impl Ray {
     pub fn new(origin: cgmath::Point3<f32>, direction: Vector3<f32>, length: f32) -> Self {
@@ -33,16 +32,12 @@ impl Ray {
         }
     }
 
-
     pub fn from_camera(camera: &Camera, length: f32) -> Self {
         let (sin_pitch, cos_pitch) = camera.pitch.0.sin_cos();
         let (sin_yaw, cos_yaw) = camera.yaw.0.sin_cos();
-        
-        let direction = Vector3::new(
-            cos_pitch * cos_yaw,
-            sin_pitch,
-            cos_pitch * sin_yaw
-        ).normalize();
+
+        let direction =
+            Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize();
 
         Self {
             origin: camera.position,
@@ -51,16 +46,15 @@ impl Ray {
         }
     }
 
-
     pub fn cast(&self, chunks: &ChunkManager) -> Option<BlockHit> {
-        // Convertimos el origen a coordenadas de bloque
+        // Переводим начало луча в координаты блока
         let mut current_block_pos = Vector3::new(
             self.origin.x.floor() as i32,
             self.origin.y.floor() as i32,
             self.origin.z.floor() as i32,
         );
 
-        // Calculamos el paso y la distancia inicial para cada eje
+        // Считаем шаг и начальное расстояние по каждой оси
         let step = Vector3::new(
             if self.direction.x > 0.0 { 1 } else { -1 },
             if self.direction.y > 0.0 { 1 } else { -1 },
@@ -124,9 +118,9 @@ impl Ray {
         let mut face = Direction::TOP; // Valor por defecto, se actualizará
         let mut traveled_distance = 0.0;
 
-        // Algoritmo DDA
+        // Алгоритм DDA по вокселям
         while traveled_distance < self.length {
-            // Verificamos si el bloque actual es sólido
+            // Проверяем, что текущий блок не воздух/вода
             if let Some(material) = chunks.get_block_material(current_block_pos) {
                 if material != MaterialType::AIR && material != MaterialType::WATER {
                     return Some(BlockHit {
@@ -137,7 +131,7 @@ impl Ray {
                 }
             }
 
-            // Avanzamos al siguiente bloque
+            // Продвигаемся к соседнему блоку
             if t_max.x < t_max.y && t_max.x < t_max.z {
                 traveled_distance = t_max.x;
                 t_max.x += t_delta.x;
@@ -170,6 +164,4 @@ impl Ray {
 
         None
     }
-
-
 }

@@ -1,6 +1,5 @@
-
-pub mod terrain;
 pub mod hud;
+pub mod terrain;
 
 use bytemuck::{Pod, Zeroable};
 use cgmath::{Matrix4, SquareMatrix};
@@ -14,44 +13,31 @@ pub struct Globals {
     /// Transformation from world coordinate space (with focus_off as the
     /// origin) to the camera space
     view_proj: [[f32; 4]; 4],
-
 }
 
 impl Globals {
     /// Create global consts from the provided parameters.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        view_proj: [[f32; 4]; 4]
-    ) -> Self {
-        Self {
-            view_proj
-
-        }
+    pub fn new(view_proj: [[f32; 4]; 4]) -> Self {
+        Self { view_proj }
     }
 }
 
 impl Default for Globals {
     fn default() -> Self {
-        Self::new(
-            Matrix4::identity().into(),
-
-        )
+        Self::new(Matrix4::identity().into())
     }
 }
-
-
 
 // Global scene data spread across several arrays.
 pub struct GlobalModel {
     pub globals: Consts<Globals>,
-
 }
 
 pub struct GlobalsLayouts {
     pub globals: wgpu::BindGroupLayout,
     pub atlas_layout: wgpu::BindGroupLayout,
     pub hud_layout: wgpu::BindGroupLayout,
-
 }
 
 impl GlobalsLayouts {
@@ -131,9 +117,7 @@ impl GlobalsLayouts {
         }
     }
 
-    fn base_global_entries(
-        global_model: &GlobalModel
-    ) -> Vec<wgpu::BindGroupEntry> {
+    fn base_global_entries(global_model: &GlobalModel) -> Vec<wgpu::BindGroupEntry> {
         vec![
             // Global uniform
             wgpu::BindGroupEntry {
@@ -143,11 +127,7 @@ impl GlobalsLayouts {
         ]
     }
 
-    pub fn bind(
-        &self,
-        device: &wgpu::Device,
-        global_model: &GlobalModel,
-    ) -> BindGroup {
+    pub fn bind(&self, device: &wgpu::Device, global_model: &GlobalModel) -> BindGroup {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.globals,
@@ -157,11 +137,7 @@ impl GlobalsLayouts {
         bind_group
     }
 
-    pub fn bind_atlas_texture(
-        &self,
-        device: &wgpu::Device,
-        texture: &Texture
-    ) -> BindGroup {
+    pub fn bind_atlas_texture(&self, device: &wgpu::Device, texture: &Texture) -> BindGroup {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.globals,
@@ -180,7 +156,6 @@ impl GlobalsLayouts {
         bind_group
     }
 
-
     // Nueva función para crear bind groups de HUD
     pub fn bind_hud_texture(
         &self,
@@ -189,7 +164,7 @@ impl GlobalsLayouts {
         sampler: Option<&wgpu::Sampler>, // Permite usar un sampler personalizado
     ) -> BindGroup {
         let default_sampler = sampler.unwrap_or(&texture.sampler);
-        
+
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hud_bind_group"),
             layout: &self.hud_layout,

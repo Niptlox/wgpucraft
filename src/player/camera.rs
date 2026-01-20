@@ -1,14 +1,15 @@
 use cgmath::*;
-use tracy_client::span;
-use winit::event::*;
-use winit::dpi::PhysicalPosition;
 use instant::Duration;
-use winit::keyboard::{KeyCode, PhysicalKey};
 use std::f32::consts::FRAC_PI_2;
+#[cfg(feature = "tracy")]
+use tracy_client::span;
+use winit::dpi::PhysicalPosition;
+use winit::event::*;
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::render::renderer::Renderer;
 
-use crate::terrain_gen::{chunk::CHUNK_Y_SIZE, generator::CHUNKS_VIEW_SIZE};
+use crate::terrain_gen::chunk::CHUNK_AREA;
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
@@ -21,7 +22,7 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
 pub struct Dependants {
-    pub view_proj:  [[f32; 4]; 4]
+    pub view_proj: [[f32; 4]; 4],
 }
 
 pub struct Camera {
@@ -33,19 +34,29 @@ pub struct Camera {
     pub projection: Projection,
     pub camera_controller: CameraController,
 
-    pub dependants: Dependants
+    pub dependants: Dependants,
 }
 
 impl Camera {
-    pub fn new<V: Into<Point3<f32>>, Y: Into<Rad<f32>>, P: Into<Rad<f32>>>(renderer: &Renderer, position: V, yaw: Y, pitch: P) -> Self {
+    pub fn new<V: Into<Point3<f32>>, Y: Into<Rad<f32>>, P: Into<Rad<f32>>>(
+        renderer: &Renderer,
+        position: V,
+        yaw: Y,
+        pitch: P,
+        render_distance_chunks: usize,
+        move_speed: f32,
+        sensitivity: f32,
+        invert_y: bool,
+        fov_y_degrees: f32,
+    ) -> Self {
         let projection = Projection::new(
             renderer.config.width,
             renderer.config.height,
-            cgmath::Deg(45.0),
+            cgmath::Deg(fov_y_degrees),
             0.1,
-            (CHUNKS_VIEW_SIZE * CHUNK_Y_SIZE as usize) as f32,
+            (render_distance_chunks.max(1) * CHUNK_AREA) as f32,
         );
-        let camera_controller = CameraController::new(12.0, 2.1);
+        let camera_controller = CameraController::new(move_speed, sensitivity, invert_y);
 
         let mut camera = Self {
             position: position.into(),
@@ -57,11 +68,11 @@ impl Camera {
             camera_controller,
 
             dependants: Dependants {
-                view_proj: Matrix4::identity().into()
-            }
+                view_proj: Matrix4::identity().into(),
+            },
         };
 
-        camera.update_dependants(Duration::from_secs(0));
+        camera.update_view();
 
         return camera;
     }
@@ -72,11 +83,7 @@ impl Camera {
 
         Matrix4::look_to_rh(
             self.position,
-            Vector3::new(
-                cos_pitch * cos_yaw,
-                sin_pitch,
-                cos_pitch * sin_yaw
-            ).normalize(),
+            Vector3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw).normalize(),
             Vector3::unit_y(),
         )
     }
@@ -93,11 +100,12 @@ impl Camera {
     pub fn input_keyboard(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {
-                event: KeyEvent {
-                    state,
-                    physical_key: PhysicalKey::Code(key),
-                    ..
-                },
+                event:
+                    KeyEvent {
+                        state,
+                        physical_key: PhysicalKey::Code(key),
+                        ..
+                    },
                 ..
             } => self.camera_controller.process_keyboard(*key, *state),
             _ => false,
@@ -108,48 +116,58 @@ impl Camera {
         self.projection.resize(new_size.width, new_size.height)
     }
 
-    pub fn update_dependants(&mut self, dt: Duration) {
+    pub fn step_input(&mut self, dt: Duration) -> Vector3<f32> {
+        #[cfg(feature = "tracy")]
         let _span = span!("update camera deps"); // <- Marca el inicio del bloque
 
-        self.update_camera_controller(dt);
-        let view_proj:  [[f32; 4]; 4] = (self.projection.calc_matrix() * self.calc_matrix()).into();
-        self.dependants = Dependants {view_proj}
+        let movement = self.update_camera_controller(dt);
+        self.update_view();
+        movement
     }
 
-    pub fn dependants(&self) -> &Dependants { &self.dependants }
+    pub fn dependants(&self) -> &Dependants {
+        &self.dependants
+    }
 
-    pub fn update_camera_controller(&mut self, dt: Duration) {
+    pub fn update_view(&mut self) {
+        let view_proj: [[f32; 4]; 4] = (self.projection.calc_matrix() * self.calc_matrix()).into();
+        self.dependants = Dependants { view_proj }
+    }
+
+    pub fn update_camera_controller(&mut self, dt: Duration) -> Vector3<f32> {
         let dt = dt.as_secs_f32();
 
         // Move forward/backward and left/right
         let (yaw_sin, yaw_cos) = self.yaw.0.sin_cos();
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
-        self.position += forward * (self.camera_controller.amount_forward - self.camera_controller.amount_backward) * self.camera_controller.speed * dt;
-        self.position += right * (self.camera_controller.amount_right - self.camera_controller.amount_left) * self.camera_controller.speed * dt;
+        let mut movement = forward
+            * (self.camera_controller.amount_forward - self.camera_controller.amount_backward)
+            * self.camera_controller.speed;
+        movement += right
+            * (self.camera_controller.amount_right - self.camera_controller.amount_left)
+            * self.camera_controller.speed;
 
-        // Move in/out (aka. "zoom")
-        // Note: this isn't an actual zoom. The camera's position
-        // changes when zooming. I've added this to make it easier
-        // to get closer to an object you want to focus on.
-        let (pitch_sin, pitch_cos) = self.pitch.0.sin_cos();
-        let scrollward = Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
-        self.position += scrollward * self.camera_controller.scroll * self.camera_controller.speed * self.camera_controller.sensitivity * dt;
-        self.camera_controller.scroll = 0.0;
-
-        // Move up/down. Since we don't use roll, we can just
-        // modify the y coordinate directly.
-        self.position.y += (self.camera_controller.amount_up - self.camera_controller.amount_down) * self.camera_controller.speed * dt;
+        // Move up/down (used for creative flight)
+        movement.y += (self.camera_controller.amount_up - self.camera_controller.amount_down)
+            * self.camera_controller.speed;
 
         // Rotate
-        self.yaw += Rad(self.camera_controller.rotate_horizontal) * self.camera_controller.sensitivity * dt;
-        self.pitch += Rad(-self.camera_controller.rotate_vertical) * self.camera_controller.sensitivity * dt;
+        self.yaw +=
+            Rad(self.camera_controller.rotate_horizontal) * self.camera_controller.sensitivity * dt;
+        let vertical = if self.camera_controller.invert_y {
+            self.camera_controller.rotate_vertical
+        } else {
+            -self.camera_controller.rotate_vertical
+        };
+        self.pitch += Rad(vertical) * self.camera_controller.sensitivity * dt;
 
         // If process_mouse isn't called every frame, these values
         // will not get set to zero, and the camera will rotate
         // when moving in a non-cardinal direction.
         self.camera_controller.rotate_horizontal = 0.0;
         self.camera_controller.rotate_vertical = 0.0;
+        self.camera_controller.scroll = 0.0;
 
         // Keep the camera's angle from going too high/low.
         if self.pitch < -Rad(SAFE_FRAC_PI_2) {
@@ -157,10 +175,10 @@ impl Camera {
         } else if self.pitch > Rad(SAFE_FRAC_PI_2) {
             self.pitch = Rad(SAFE_FRAC_PI_2);
         }
+
+        movement
     }
 }
-
-
 
 pub struct Projection {
     aspect: f32,
@@ -170,13 +188,7 @@ pub struct Projection {
 }
 
 impl Projection {
-    pub fn new<F: Into<Rad<f32>>>(
-        width: u32,
-        height: u32,
-        fovy: F,
-        znear: f32,
-        zfar: f32,
-    ) -> Self {
+    pub fn new<F: Into<Rad<f32>>>(width: u32, height: u32, fovy: F, znear: f32, zfar: f32) -> Self {
         Self {
             aspect: width as f32 / height as f32,
             fovy: fovy.into(),
@@ -194,7 +206,6 @@ impl Projection {
     }
 }
 
-
 #[derive(Debug)]
 pub struct CameraController {
     amount_left: f32,
@@ -208,10 +219,11 @@ pub struct CameraController {
     scroll: f32,
     speed: f32,
     sensitivity: f32,
+    invert_y: bool,
 }
 
 impl CameraController {
-    pub fn new(speed: f32, sensitivity: f32) -> Self {
+    pub fn new(speed: f32, sensitivity: f32, invert_y: bool) -> Self {
         Self {
             amount_left: 0.0,
             amount_right: 0.0,
@@ -224,11 +236,16 @@ impl CameraController {
             scroll: 0.0,
             speed,
             sensitivity,
+            invert_y,
         }
     }
 
-    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool{
-        let amount = if state == ElementState::Pressed { 1.0 } else { 0.0 };
+    pub fn process_keyboard(&mut self, key: KeyCode, state: ElementState) -> bool {
+        let amount = if state == ElementState::Pressed {
+            1.0
+        } else {
+            0.0
+        };
         match key {
             KeyCode::KeyW | KeyCode::ArrowUp => {
                 self.amount_forward = amount;
@@ -263,14 +280,19 @@ impl CameraController {
         self.rotate_vertical = mouse_dy as f32;
     }
 
+    pub fn jump_requested(&self) -> bool {
+        self.amount_up > 0.0
+    }
+
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = speed;
+    }
+
     pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
         self.scroll = -match delta {
             // I'm assuming a line is about 100 pixels
             MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
-            MouseScrollDelta::PixelDelta(PhysicalPosition {
-                y: scroll,
-                ..
-            }) => *scroll as f32,
+            MouseScrollDelta::PixelDelta(PhysicalPosition { y: scroll, .. }) => *scroll as f32,
         };
     }
 }

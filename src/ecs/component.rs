@@ -3,16 +3,11 @@ use std::collections::HashMap;
 
 use super::entity::Entity;
 
-
-
-pub trait  Component: Any + Send + Sync {
-
+pub trait Component: Any + Send + Sync {
     fn type_id(&self) -> TypeId {
         TypeId::of::<Self>()
     }
-    
 }
-
 
 /// Macro para derivar automáticamente el trait `Component`.
 /// Esto permite usar `#[derive(Component)]` en structs.
@@ -23,16 +18,14 @@ macro_rules! derive_component {
     };
 }
 
-
 pub struct ComponentStorage<T> {
-    components: HashMap<Entity, T>
+    components: HashMap<Entity, T>,
 }
 
 impl<T: Component> ComponentStorage<T> {
-
     pub fn new() -> Self {
         Self {
-            components: HashMap::new()
+            components: HashMap::new(),
         }
     }
 
