@@ -25,7 +25,26 @@ pub struct Chunk {
     pub offset: [i32; 3],
     pub mesh: Mesh<BlockVertex>,
     pub dirty: bool,
+    layer_meshes: Vec<LayerMesh>,
+    layer_dirty: Vec<bool>,
+    layer_spans: Vec<LayerSpan>,
+    layout_changed: bool,
+    rebuilt_layers: Vec<usize>,
     dirty_y_range: Option<(usize, usize)>,
+}
+
+#[derive(Default, Clone)]
+struct LayerMesh {
+    verts: Vec<BlockVertex>,
+    indices: Vec<u32>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub struct LayerSpan {
+    pub v_start: u32,
+    pub v_len: u32,
+    pub i_start: u32,
+    pub i_len: u32,
 }
 
 impl Chunk {
@@ -59,6 +78,11 @@ impl Chunk {
             offset,
             mesh,
             dirty: false,
+            layer_meshes: vec![LayerMesh::default(); CHUNK_Y_SIZE],
+            layer_dirty: vec![true; CHUNK_Y_SIZE],
+            layer_spans: vec![LayerSpan::default(); CHUNK_Y_SIZE],
+            layout_changed: true,
+            rebuilt_layers: (0..CHUNK_Y_SIZE).collect(),
             dirty_y_range: None,
         }
     }
@@ -148,31 +172,45 @@ impl Chunk {
                 }
             }
         }
-        self.dirty = false;
+        self.dirty = true;
+        self.dirty_y_range = Some((0, CHUNK_Y_SIZE - 1));
+        self.layer_dirty.iter_mut().for_each(|d| *d = true);
+        self.rebuilt_layers = (0..CHUNK_Y_SIZE).collect();
     }
 
-    pub fn update_mesh(&mut self, _biome: BiomeParameters, _y_range: Option<(usize, usize)>) {
-        let mut verts = Vec::new();
-        let mut indices = Vec::new();
+    pub fn update_mesh(&mut self, _biome: BiomeParameters, y_range: Option<(usize, usize)>) {
+        let (y_start, y_end) = match y_range {
+            Some((lo, hi)) => (lo.min(CHUNK_Y_SIZE - 1), hi.min(CHUNK_Y_SIZE - 1)),
+            None => {
+                self.layer_dirty.iter_mut().for_each(|d| *d = true);
+                (0, CHUNK_Y_SIZE - 1)
+            }
+        };
+
+        let mut rebuilt = Vec::new();
 
         #[cfg(feature = "tracy")]
         let _span = span!(" update chunk mesh"); // Замер построения меша
 
-        // Итерируемся только по внутренней области (1..CHUNK_AREA+1 исключает паддинг)
-        for y in 0..CHUNK_Y_SIZE {
+        for y in y_start..=y_end {
+            if !self.layer_dirty.get(y).copied().unwrap_or(false) {
+                continue;
+            }
+            rebuilt.push(y);
+            self.layer_dirty[y] = false;
+            let mut layer = LayerMesh::default();
+
             for x in 1..=CHUNK_AREA {
                 for z in 1..=CHUNK_AREA {
                     #[cfg(feature = "tracy")]
                     let _inner_span = span!("processing block vertices"); // Замер вершин блока
 
                     let block = self.get_block(y, x, z).unwrap();
-                    let mut block_vertices = Vec::with_capacity(4 * 6);
-                    let mut block_indices: Vec<u32> = Vec::with_capacity(6 * 6);
-
                     if block.material_type as i32 == MaterialType::AIR as i32 {
                         continue;
                     }
 
+                    let mut block_indices: Vec<u32> = Vec::with_capacity(6 * 6);
                     let mut quad_counter = 0;
 
                     for side in crate::terrain_gen::block::Direction::ALL {
@@ -187,23 +225,52 @@ impl Chunk {
                                 side,
                                 world_pos,
                             );
-                            block_vertices.extend_from_slice(&quad.vertices);
+                            layer.verts.extend_from_slice(&quad.vertices);
                             block_indices.extend_from_slice(&quad.get_indices(quad_counter));
                             quad_counter += 1;
                         }
                     }
 
-                    block_indices = block_indices
-                        .iter()
-                        .map(|i| i + verts.len() as u32)
-                        .collect();
-                    verts.extend(block_vertices);
-                    indices.extend(block_indices);
+                    let base = layer.verts.len() as u32 - (quad_counter * 4);
+                    block_indices = block_indices.iter().map(|i| i + base).collect();
+                    layer.indices.extend(block_indices);
                 }
             }
+
+            self.layer_meshes[y] = layer;
         }
 
+        let mut verts = Vec::new();
+        let mut indices = Vec::new();
+        let mut spans = Vec::with_capacity(CHUNK_Y_SIZE);
+        let mut v_start = 0u32;
+        let mut i_start = 0u32;
+        for layer in &self.layer_meshes {
+            let v_len = layer.verts.len() as u32;
+            let i_len = layer.indices.len() as u32;
+            spans.push(LayerSpan {
+                v_start,
+                v_len,
+                i_start,
+                i_len,
+            });
+            indices.extend(layer.indices.iter().map(|i| i + v_start));
+            verts.extend_from_slice(&layer.verts);
+            v_start += v_len;
+            i_start += i_len;
+        }
+
+        let layout_changed = self.layer_spans.len() != spans.len()
+            || self
+                .layer_spans
+                .iter()
+                .zip(spans.iter())
+                .any(|(a, b)| a != b);
+
         self.mesh = Mesh { verts, indices };
+        self.layer_spans = spans;
+        self.layout_changed = layout_changed;
+        self.rebuilt_layers = rebuilt;
         self.dirty_y_range = None;
     }
 
@@ -214,10 +281,33 @@ impl Chunk {
             Some((lo, hi)) => Some((lo.min(y0), hi.max(y1))),
             None => Some((y0, y1)),
         };
+        for ly in y0..=y1 {
+            if let Some(flag) = self.layer_dirty.get_mut(ly) {
+                *flag = true;
+            }
+        }
     }
 
     pub fn dirty_y_range(&self) -> Option<(usize, usize)> {
         self.dirty_y_range
+    }
+
+    pub fn layout_changed(&self) -> bool {
+        self.layout_changed
+    }
+
+    pub fn layer_spans(&self) -> &[LayerSpan] {
+        &self.layer_spans
+    }
+
+    pub fn take_rebuilt_layers(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.rebuilt_layers)
+    }
+
+    pub fn layer_mesh(&self, y: usize) -> Option<(&[BlockVertex], &[u32])> {
+        self.layer_meshes
+            .get(y)
+            .map(|lm| (lm.verts.as_slice(), lm.indices.as_slice()))
     }
 
     fn is_quad_visible(&self, neighbor_pos: &Vector3<i32>) -> bool {

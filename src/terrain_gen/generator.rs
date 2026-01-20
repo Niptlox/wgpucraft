@@ -19,6 +19,7 @@ use crate::{
 };
 
 use cgmath::{EuclideanSpace, Point3, Vector3};
+use bytemuck::cast_slice;
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
@@ -62,7 +63,8 @@ pub struct TerrainGen {
     center_offset: Vector3<i32>,
     chunks_origin: Vector3<i32>,
     pub chunk_models: Vec<Arc<RwLock<DynamicModel<BlockVertex>>>>,
-    job_tx: Sender<ChunkJob>,
+    gen_job_tx: Sender<ChunkJob>,
+    remesh_job_tx: Sender<ChunkJob>,
     ready_rx: Receiver<usize>,
     pending_jobs: HashSet<usize>,
     save_dir: PathBuf,
@@ -136,13 +138,16 @@ impl TerrainGen {
         let chunks_origin = center_offset
             - Vector3::new(chunks_view_size as i32 / 2, 0, chunks_view_size as i32 / 2);
 
-        let (job_tx, job_rx) = mpsc::channel::<ChunkJob>();
+        let (gen_job_tx, gen_job_rx) = mpsc::channel::<ChunkJob>();
+        let (remesh_job_tx, remesh_job_rx) = mpsc::channel::<ChunkJob>();
         let (ready_tx, ready_rx) = mpsc::channel::<usize>();
         let (save_tx, save_rx) = mpsc::channel::<(PathBuf, Vec<u8>)>();
         let noise_for_worker = noise_gen.clone();
 
         std::thread::spawn(move || {
-            while let Ok(job) = job_rx.recv() {
+            use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+
+            let process_job = |job: ChunkJob| {
                 match job.kind {
                     JobKind::Generate { offset } => {
                         if let Ok(mut chunk) = job.chunk.write() {
@@ -168,6 +173,35 @@ impl TerrainGen {
                     }
                 }
                 let _ = ready_tx.send(job.chunk_index);
+            };
+
+            let mut remesh_alive = true;
+            let mut gen_alive = true;
+
+            while remesh_alive || gen_alive {
+                match remesh_job_rx.try_recv() {
+                    Ok(job) => {
+                        process_job(job);
+                        continue;
+                    }
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => remesh_alive = false,
+                }
+
+                match remesh_job_rx.recv_timeout(std::time::Duration::from_millis(5)) {
+                    Ok(job) => {
+                        process_job(job);
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => remesh_alive = false,
+                }
+
+                match gen_job_rx.recv_timeout(std::time::Duration::from_millis(25)) {
+                    Ok(job) => process_job(job),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => gen_alive = false,
+                }
             }
         });
 
@@ -191,7 +225,8 @@ impl TerrainGen {
             chunks_origin,
             chunk_indices: Arc::new(RwLock::new(chunk_indices)),
             free_chunk_indices: Arc::new(RwLock::new(free_chunk_indices)),
-            job_tx,
+            gen_job_tx,
+            remesh_job_tx,
             ready_rx,
             pending_jobs: HashSet::new(),
             save_dir,
@@ -239,7 +274,7 @@ impl TerrainGen {
                 OutlineVertex { pos: [max.x, max.y, max.z] },    // 6
                 OutlineVertex { pos: [base.x, max.y, max.z] },   // 7
             ];
-            let mut mesh = Mesh {
+            let mesh = Mesh {
                 verts: verts.into(),
                 indices: vec![
                     0, 1, 1, 2, 2, 3, 3, 0, // front square
@@ -315,15 +350,72 @@ impl TerrainGen {
                 .any(|entry| entry.map_or(false, |idx| idx == chunk_index));
 
             if let Some(chunk_model) = self.chunk_models.get(chunk_index) {
-                let offset = if let Ok(chunk) = self.chunks.get_chunk(chunk_index).unwrap().read() {
+                let (_layout_changed, rebuilt_layers, _spans, mesh, offset, layer_data, total_indices) =
+                    if let Some(chunk_arc) = self.chunks.get_chunk(chunk_index) {
+                        let mut chunk = chunk_arc.write().unwrap();
+                        let layout_changed = chunk.layout_changed();
+                        let rebuilt_layers = chunk.take_rebuilt_layers();
+                        let spans = chunk.layer_spans().to_vec();
+                        let offset = chunk.offset;
+                        let mesh = if layout_changed {
+                            Some(chunk.mesh.clone())
+                        } else {
+                            None
+                        };
+                        let total_indices: u32 = spans.iter().map(|s| s.i_len).sum();
+
+                        let mut layer_data = Vec::new();
+                        if !layout_changed {
+                            for &ly in &rebuilt_layers {
+                                if let Some(span) = spans.get(ly).copied() {
+                                    if let Some((verts, inds)) = chunk.layer_mesh(ly) {
+                                        layer_data.push((span, verts.to_vec(), inds.to_vec()));
+                                    }
+                                }
+                            }
+                        }
+
+                        (
+                            layout_changed,
+                            rebuilt_layers,
+                            spans,
+                            mesh,
+                            offset,
+                            layer_data,
+                            total_indices,
+                        )
+                    } else {
+                        (false, Vec::new(), Vec::new(), None, [0, 0, 0], Vec::new(), 0)
+                    };
+
+                if let Some(mesh) = mesh {
                     let mut chunk_model = chunk_model.write().unwrap();
-                    chunk_model.update(device, queue, &chunk.mesh);
-                    Some(chunk.offset)
-                } else {
-                    None
-                };
-                if let Some(offset) = offset {
+                    chunk_model.update(device, queue, &mesh);
+                    chunk_model.num_indices = mesh.indices().len() as u32;
                     self.chunks.update_chunk_offset(chunk_index, offset);
+                } else {
+                    // Частичное обновление: перезаписываем изменённые слои.
+                    if !rebuilt_layers.is_empty() {
+                        if let Some(vb) = self.chunk_models.get(chunk_index) {
+                            let mut model = vb.write().unwrap();
+                            model.num_indices = total_indices;
+                            let v_buffer = model.vbuf();
+                            let i_buffer = model.ibuf();
+                            for (span, verts, inds) in layer_data {
+                                let v_offset = span.v_start as u64
+                                    * std::mem::size_of::<BlockVertex>() as u64;
+                                let i_offset = span.i_start as u64 * std::mem::size_of::<u32>() as u64;
+                                queue.write_buffer(v_buffer, v_offset, cast_slice(&verts));
+                                let global_inds: Vec<u32> =
+                                    inds.iter().map(|i| i + span.v_start).collect();
+                                queue.write_buffer(i_buffer, i_offset, cast_slice(&global_inds));
+                            }
+                        }
+                        self.chunks.update_chunk_offset(chunk_index, offset);
+                    } else {
+                        // Ничего не обновлялось, но на всякий случай фиксим offset.
+                        self.chunks.update_chunk_offset(chunk_index, offset);
+                    }
                 }
             }
 
@@ -375,7 +467,7 @@ impl TerrainGen {
 
             self.pending_jobs.insert(idx);
             self.dirty_set.remove(&idx);
-            let _ = self.job_tx.send(job);
+            let _ = self.remesh_job_tx.send(job);
             scheduled += 1;
         }
     }
@@ -388,7 +480,8 @@ impl TerrainGen {
         }
     }
 
-    /// Быстрое обновление мешей для нескольких чанков без ожидания фоновой очереди.
+    /// Синхронный быстрый ремеш сразу после действия игрока — используем
+    /// узкий y-диапазон, который накоплен в dirty_y_range.
     pub fn remesh_chunks_now(
         &mut self,
         device: &wgpu::Device,
@@ -396,14 +489,14 @@ impl TerrainGen {
         indices: &[usize],
     ) {
         for &idx in indices {
-            // Если чанк уже в генерации/ремеше в фоне — не блокируемся.
-            if self.pending_jobs.contains(&idx) {
-                continue;
-            }
-
-            self.remove_from_dirty(idx);
-
             if let Some(chunk_arc) = self.chunks.get_chunk(idx) {
+                // Если уже в фоне — не трогаем, иначе можем обновить сразу.
+                if self.pending_jobs.contains(&idx) {
+                    continue;
+                }
+
+                self.remove_from_dirty(idx);
+
                 let mut chunk = chunk_arc.write().unwrap();
                 if !chunk.dirty {
                     continue;
@@ -413,6 +506,7 @@ impl TerrainGen {
                 chunk.dirty = false;
                 let mesh = chunk.mesh.clone();
                 drop(chunk);
+
                 if let Some(chunk_model) = self.chunk_models.get(idx) {
                     let mut model = chunk_model.write().unwrap();
                     model.update(device, queue, &mesh);
@@ -423,13 +517,7 @@ impl TerrainGen {
 
     fn remove_from_dirty(&mut self, idx: usize) {
         self.dirty_set.remove(&idx);
-        let mut new_q = VecDeque::with_capacity(self.dirty_queue.len());
-        while let Some(val) = self.dirty_queue.pop_front() {
-            if val != idx {
-                new_q.push_back(val);
-            }
-        }
-        self.dirty_queue = new_q;
+        self.dirty_queue.retain(|&val| val != idx);
     }
 
     pub fn load_empty_chunks(&mut self, player_chunk: Vector3<i32>) {
@@ -468,7 +556,7 @@ impl TerrainGen {
                         },
                         save_dir: self.save_dir.clone(),
                     };
-                    let _ = self.job_tx.send(job);
+                    let _ = self.gen_job_tx.send(job);
                 }
             } else {
                 break;
