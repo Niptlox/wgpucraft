@@ -9,9 +9,11 @@ use crate::terrain_gen::chunk::{CHUNK_AREA, Chunk, ChunkManager};
 use crate::{
     render::{
         atlas::{Atlas, MaterialType},
-        model::DynamicModel,
+        model::{DynamicModel, Model},
+        mesh::Mesh,
         pipelines::terrain::{BlockVertex, create_terrain_pipeline},
         renderer::{Draw, Renderer},
+        Vertex,
     },
     terrain_gen::biomes::PRAIRIE_PARAMS,
 };
@@ -33,8 +35,25 @@ const MIN_INDEX_CAP: usize = 8 * 1024;
 
 use super::noise::NoiseGenerator;
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct OutlineVertex {
+    pub pos: [f32; 3],
+}
+
+impl Vertex for OutlineVertex {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OutlineVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+        }
+    }
+}
+
 pub struct TerrainGen {
     pipeline: wgpu::RenderPipeline,
+    highlight_pipeline: wgpu::RenderPipeline,
     atlas: Atlas,
     pub chunks: ChunkManager,
     chunks_view_size: usize,
@@ -50,6 +69,8 @@ pub struct TerrainGen {
     dirty_queue: VecDeque<usize>,
     dirty_set: HashSet<usize>,
     save_tx: Sender<(PathBuf, Vec<u8>)>,
+    highlight_model: Option<Model<OutlineVertex>>,
+    highlight_pos: Option<Vector3<i32>>,
 }
 
 struct ChunkJob {
@@ -101,7 +122,10 @@ impl TerrainGen {
             .create_shader_module(wgpu::include_wgsl!("../../assets/shaders/shader.wgsl"));
 
         let world_pipeline =
-            create_terrain_pipeline(&renderer.device, &global_layouts, shader, &renderer.config);
+            create_terrain_pipeline(&renderer.device, &global_layouts, shader.clone(), &renderer.config);
+        let highlight_shader = create_highlight_shader(&renderer.device);
+        let highlight_pipeline =
+            create_highlight_pipeline(&renderer.device, &global_layouts, &highlight_shader, &renderer.config);
 
         let center_offset = Vector3::new(0, 0, 0);
         let chunks_origin = center_offset
@@ -123,7 +147,7 @@ impl TerrainGen {
                     if !loaded {
                         chunk.update_blocks(job.offset.into(), &noise_for_worker, &PRAIRIE_PARAMS);
                     }
-                    chunk.update_mesh(PRAIRIE_PARAMS);
+                    chunk.update_mesh(PRAIRIE_PARAMS, None);
                 }
                 let _ = ready_tx.send(job.chunk_index);
             }
@@ -140,6 +164,7 @@ impl TerrainGen {
 
         let mut world = Self {
             pipeline: world_pipeline,
+            highlight_pipeline,
             atlas,
             chunks,
             chunk_models,
@@ -155,12 +180,59 @@ impl TerrainGen {
             dirty_queue: VecDeque::new(),
             dirty_set: HashSet::new(),
             save_tx,
+            highlight_model: None,
+            highlight_pos: None,
         };
 
         println!("about to load first chunks");
         world.load_empty_chunks(center_offset);
 
         world
+    }
+
+    pub fn update_highlight_model(
+        &mut self,
+        device: &wgpu::Device,
+        block: Option<Vector3<i32>>,
+    ) {
+        if self.highlight_pos == block {
+            return;
+        }
+        self.highlight_pos = block;
+        if let Some(pos) = block {
+            let inflate = 0.01;
+            let base = Vector3::new(
+                pos.x as f32 - inflate,
+                pos.y as f32 - inflate,
+                pos.z as f32 - inflate,
+            );
+            let max = Vector3::new(
+                pos.x as f32 + 1.0 + inflate,
+                pos.y as f32 + 1.0 + inflate,
+                pos.z as f32 + 1.0 + inflate,
+            );
+            let verts = [
+                OutlineVertex { pos: [base.x, base.y, base.z] }, // 0
+                OutlineVertex { pos: [max.x, base.y, base.z] },  // 1
+                OutlineVertex { pos: [max.x, max.y, base.z] },   // 2
+                OutlineVertex { pos: [base.x, max.y, base.z] },  // 3
+                OutlineVertex { pos: [base.x, base.y, max.z] },  // 4
+                OutlineVertex { pos: [max.x, base.y, max.z] },   // 5
+                OutlineVertex { pos: [max.x, max.y, max.z] },    // 6
+                OutlineVertex { pos: [base.x, max.y, max.z] },   // 7
+            ];
+            let mut mesh = Mesh {
+                verts: verts.into(),
+                indices: vec![
+                    0, 1, 1, 2, 2, 3, 3, 0, // front square
+                    4, 5, 5, 6, 6, 7, 7, 4, // back square
+                    0, 4, 1, 5, 2, 6, 3, 7, // vertical edges
+                ],
+            };
+            self.highlight_model = Model::new(device, &mesh);
+        } else {
+            self.highlight_model = None;
+        }
     }
 
     // вызывается каждый кадр
@@ -251,7 +323,8 @@ impl TerrainGen {
             if let Some(chunk_arc) = self.chunks.get_chunk(idx) {
                 let mut chunk = chunk_arc.write().unwrap();
                 if chunk.dirty {
-                    chunk.update_mesh(PRAIRIE_PARAMS);
+                    let y_range = chunk.dirty_y_range();
+                    chunk.update_mesh(PRAIRIE_PARAMS, y_range);
                     chunk.dirty = false;
                     let mesh = chunk.mesh.clone();
                     drop(chunk);
@@ -448,6 +521,108 @@ impl Draw for TerrainGen {
             render_pass.draw_indexed(0..num_indices, 0, 0..1 as _);
         }
 
+        if let Some(model) = &self.highlight_model {
+            render_pass.set_pipeline(&self.highlight_pipeline);
+            render_pass.set_bind_group(0, globals, &[]);
+            render_pass.set_vertex_buffer(0, model.vbuf().slice(..));
+            render_pass.set_index_buffer(model.ibuf().slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..model.num_indices, 0, 0..1);
+        }
+
         Ok(())
     }
+}
+
+fn create_highlight_pipeline(
+    device: &wgpu::Device,
+    global_layout: &GlobalsLayouts,
+    shader: &wgpu::ShaderModule,
+    config: &wgpu::SurfaceConfiguration,
+) -> wgpu::RenderPipeline {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Highlight Pipeline Layout"),
+        bind_group_layouts: &[&global_layout.globals],
+        push_constant_ranges: &[],
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Highlight Pipeline"),
+        layout: Some(&pipeline_layout),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[OutlineVertex::desc()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: crate::render::texture::Texture::DEPTH_FORMAT,
+            depth_write_enabled: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+fn create_highlight_shader(device: &wgpu::Device) -> wgpu::ShaderModule {
+    let source = r#"
+struct Globals {
+    view_proj: mat4x4<f32>,
+    camera_pos: vec4<f32>,
+    fog: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> globals: Globals;
+
+struct VSIn {
+    @location(0) pos: vec3<f32>,
+};
+
+struct VSOut {
+    @builtin(position) pos: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VSIn) -> VSOut {
+    var out: VSOut;
+    out.pos = globals.view_proj * vec4<f32>(input.pos, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0, 0.6, 0.0, 1.0);
+}
+"#;
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Highlight Shader"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    })
 }

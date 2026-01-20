@@ -6,7 +6,7 @@ use crate::{
     render::atlas::MaterialType,
     terrain_gen::chunk::ChunkManager,
 };
-use cgmath::{EuclideanSpace, Vector3, vec3};
+use cgmath::{EuclideanSpace, InnerSpace, Vector3, vec3};
 
 pub struct Player {
     pub camera: camera::Camera,
@@ -66,6 +66,24 @@ impl Player {
         self.set_mode(new_mode, cfg);
     }
 
+    pub fn max_interact_range(&self) -> f32 {
+        match self.mode {
+            PlayerMode::Adventure => 4.0,
+            PlayerMode::Creative => 100.0,
+        }
+    }
+
+    pub fn toggle_view(&mut self) {
+        self.view_mode = match self.view_mode {
+            ViewMode::FirstPerson => ViewMode::ThirdPerson { distance: 4.0 },
+            ViewMode::ThirdPerson { .. } => ViewMode::FirstPerson,
+        };
+    }
+
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode
+    }
+
     pub fn update(&mut self, dt: std::time::Duration, chunks: &ChunkManager) {
         let desired_velocity = self.camera.step_input(dt);
         match self.mode {
@@ -94,7 +112,7 @@ impl Player {
                     self.position.z,
                 );
                 let offset = back * distance + vec3(0.0, -0.3, 0.0);
-                self.camera.position = (anchor + offset).into();
+                self.camera.position = cgmath::Point3::from_vec(anchor + offset);
             }
         }
     }
@@ -233,13 +251,3 @@ pub enum ViewMode {
     FirstPerson,
     ThirdPerson { distance: f32 },
 }
-    pub fn toggle_view(&mut self) {
-        self.view_mode = match self.view_mode {
-            ViewMode::FirstPerson => ViewMode::ThirdPerson { distance: 4.0 },
-            ViewMode::ThirdPerson { .. } => ViewMode::FirstPerson,
-        };
-    }
-
-    pub fn view_mode(&self) -> ViewMode {
-        self.view_mode
-    }

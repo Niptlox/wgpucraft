@@ -47,6 +47,7 @@ pub struct State<'a> {
     state: GameState,
     last_frame_time: Instant,
     frame_target: Option<Duration>,
+    selected_block: Option<cgmath::Vector3<i32>>,
 }
 
 impl<'a> State<'a> {
@@ -108,6 +109,7 @@ impl<'a> State<'a> {
             state: GameState::PLAYING,
             last_frame_time: Instant::now(),
             frame_target,
+            selected_block: None,
         }
     }
 
@@ -138,7 +140,8 @@ impl<'a> State<'a> {
                     match (button, state) {
                         // ЛКМ — ломаем блок (ставим воздух)
                         (MouseButton::Left, ElementState::Pressed) => {
-                            let ray = Ray::from_camera(&self.player.camera, 100.0);
+                            let ray =
+                                Ray::from_camera(&self.player.camera, self.player.max_interact_range());
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
@@ -153,7 +156,8 @@ impl<'a> State<'a> {
                             }
                         }
                         (MouseButton::Right, ElementState::Pressed) => {
-                            let ray = Ray::from_camera(&self.player.camera, 100.0);
+                            let ray =
+                                Ray::from_camera(&self.player.camera, self.player.max_interact_range());
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
@@ -175,7 +179,8 @@ impl<'a> State<'a> {
                             }
                         }
                         (MouseButton::Middle, ElementState::Pressed) => {
-                            let ray = Ray::from_camera(&self.player.camera, 100.0);
+                            let ray =
+                                Ray::from_camera(&self.player.camera, self.player.max_interact_range());
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
@@ -368,7 +373,9 @@ impl<'a> State<'a> {
                     fog_start,
                     fog_end,
                 )],
-            )
+            );
+
+        self.update_block_highlight();
     }
 
     pub fn handle_input_event(&mut self, event: &WindowEvent) -> bool {
@@ -382,6 +389,17 @@ impl<'a> State<'a> {
     pub fn handle_device_input(&mut self, event: &DeviceEvent, _: &EventLoopWindowTarget<()>) {
         if self.state == GameState::PLAYING {
             self.player.camera.input(event);
+        }
+    }
+
+    fn update_block_highlight(&mut self) {
+        let range = self.player.max_interact_range();
+        let ray = Ray::from_camera(&self.player.camera, range);
+        let hit = ray.cast(&self.terrain.chunks).map(|h| h.position);
+        if hit != self.selected_block {
+            self.selected_block = hit;
+            self.terrain
+                .update_highlight_model(&self.renderer.device, hit);
         }
     }
 }

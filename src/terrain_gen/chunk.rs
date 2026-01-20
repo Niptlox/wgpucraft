@@ -14,7 +14,7 @@ use crate::render::{atlas::MaterialType, mesh::Mesh, pipelines::terrain::BlockVe
 
 use super::{biomes::BiomeParameters, block::Block, generator::LAND_LEVEL, noise::NoiseGenerator};
 
-pub const CHUNK_Y_SIZE: usize = 256;
+pub const CHUNK_Y_SIZE: usize = 512;
 pub const CHUNK_AREA: usize = 16;
 pub const CHUNK_AREA_WITH_PADDING: usize = CHUNK_AREA + 2; // +1 с каждой стороны для паддинга
 pub const TOTAL_CHUNK_SIZE: usize =
@@ -25,6 +25,7 @@ pub struct Chunk {
     pub offset: [i32; 3],
     pub mesh: Mesh<BlockVertex>,
     pub dirty: bool,
+    dirty_y_range: Option<(usize, usize)>,
 }
 
 impl Chunk {
@@ -58,6 +59,7 @@ impl Chunk {
             offset,
             mesh,
             dirty: false,
+            dirty_y_range: None,
         }
     }
 
@@ -149,11 +151,10 @@ impl Chunk {
         self.dirty = false;
     }
 
-    pub fn update_mesh(&mut self, biome: BiomeParameters) {
+    pub fn update_mesh(&mut self, _biome: BiomeParameters, _y_range: Option<(usize, usize)>) {
         let mut verts = Vec::new();
         let mut indices = Vec::new();
 
-        let max_biome_height = (biome.base_height + biome.amplitude) as usize;
         #[cfg(feature = "tracy")]
         let _span = span!(" update chunk mesh"); // Замер построения меша
 
@@ -161,9 +162,6 @@ impl Chunk {
         for y in 0..CHUNK_Y_SIZE {
             for x in 1..=CHUNK_AREA {
                 for z in 1..=CHUNK_AREA {
-                    if y > max_biome_height {
-                        continue;
-                    }
                     #[cfg(feature = "tracy")]
                     let _inner_span = span!("processing block vertices"); // Замер вершин блока
 
@@ -206,6 +204,20 @@ impl Chunk {
         }
 
         self.mesh = Mesh { verts, indices };
+        self.dirty_y_range = None;
+    }
+
+    fn mark_dirty_y(&mut self, y: usize) {
+        let y0 = y.saturating_sub(1);
+        let y1 = (y + 1).min(CHUNK_Y_SIZE - 1);
+        self.dirty_y_range = match self.dirty_y_range {
+            Some((lo, hi)) => Some((lo.min(y0), hi.max(y1))),
+            None => Some((y0, y1)),
+        };
+    }
+
+    pub fn dirty_y_range(&self) -> Option<(usize, usize)> {
+        self.dirty_y_range
     }
 
     fn is_quad_visible(&self, neighbor_pos: &Vector3<i32>) -> bool {
@@ -240,11 +252,12 @@ impl ChunkManager {
         }
     }
 
-    pub fn add_chunk(&mut self, chunk: Chunk) {
-        let idx = self.chunks.len();
-        self.offset_index_map.insert(chunk.offset, idx);
+    pub fn add_chunk(&mut self, mut chunk: Chunk) {
+        chunk.offset = [i32::MIN, i32::MIN, i32::MIN];
         self.index_offset.push(chunk.offset);
         self.chunks.push(Arc::new(RwLock::new(chunk)));
+        // offset_index_map будет заполнен при update_chunk_offset
+        debug_assert!(self.offset_index_map.get(&[i32::MIN, i32::MIN, i32::MIN]).is_none());
     }
 
     pub fn get_chunk(&self, index: usize) -> Option<Arc<RwLock<Chunk>>> {
@@ -319,6 +332,7 @@ impl ChunkManager {
             if let Some(block) = chunk.get_block_mut(y as usize, x as usize, z as usize) {
                 block.update(material, chunk_offset);
                 chunk.dirty = true;
+                chunk.mark_dirty_y(y as usize);
                 println!("Block updated at world position: {:?}", world_pos);
                 touched.push(index);
             }
@@ -346,6 +360,7 @@ impl ChunkManager {
                             if let Some(pad_block) = neigh_chunk.get_block_mut(ny, nx, nz) {
                                 pad_block.update(material, neigh_off);
                             }
+                            neigh_chunk.mark_dirty_y(ny);
                         }
                         neigh_chunk.dirty = true;
                     }
@@ -461,6 +476,7 @@ impl Chunk {
         }
         self.offset = offset;
         self.dirty = false;
+        self.dirty_y_range = None;
         Ok(())
     }
 }

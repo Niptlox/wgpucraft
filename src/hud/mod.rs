@@ -26,6 +26,7 @@ pub struct HUD {
     crosshair: HUDElement,
     widget: HUDElement,
     toolbar: HUDElement,
+    toolbar_frame: HUDElement,
     palette: Vec<IconType>,
     selected_index: usize,
     debug_overlay: Option<DebugOverlay>,
@@ -96,7 +97,6 @@ impl HUD {
         let icons_bind_group =
             global_layout.bind_hud_texture(&renderer.device, &icons_atlas_tex, None);
 
-        let selected_icon = IconType::ROCK; // Значок по умолчанию
         // Геометрия элементов HUD
         let (crosshair_verts, crosshair_indices) =
             create_hud_quad(0.0, 0.0, 0.06, 0.06, aspect_correction); // Размер прицела
@@ -129,6 +129,17 @@ impl HUD {
             aspect_correction,
         );
 
+        let (frame_verts, frame_indices) =
+            build_toolbar_frame(selected_index, palette.len(), aspect_correction);
+        let frame_model = Model::new(
+            &renderer.device,
+            &Mesh {
+                verts: frame_verts,
+                indices: frame_indices,
+            },
+        )
+        .expect("Failed to create toolbar frame");
+
         // Создаём bind group для каждого элемента
         let crosshair = HUDElement {
             texture: crosshair_tex,
@@ -137,8 +148,8 @@ impl HUD {
         };
 
         let widget = HUDElement {
-            texture: widget_tex,
-            bind_group: widget_bind_group,
+            texture: widget_tex.clone(),
+            bind_group: widget_bind_group.clone(),
             model: widget_model,
         };
 
@@ -146,6 +157,12 @@ impl HUD {
             texture: icons_atlas_tex,
             bind_group: icons_bind_group,
             model: toolbar_model,
+        };
+
+        let toolbar_frame = HUDElement {
+            texture: widget_tex,
+            bind_group: widget_bind_group,
+            model: frame_model,
         };
 
         let debug_overlay = if show_debug_overlay {
@@ -163,6 +180,7 @@ impl HUD {
             crosshair,
             widget,
             toolbar,
+            toolbar_frame,
             palette,
             selected_index,
             debug_overlay,
@@ -177,6 +195,19 @@ impl HUD {
             self.selected_index,
             self.aspect_correction,
         );
+        let (frame_verts, frame_indices) = build_toolbar_frame(
+            self.selected_index,
+            self.palette.len(),
+            self.aspect_correction,
+        );
+        self.toolbar_frame.model = Model::new(
+            &renderer.device,
+            &Mesh {
+                verts: frame_verts,
+                indices: frame_indices,
+            },
+        )
+        .expect("Failed to rebuild toolbar frame");
     }
 
     pub fn select_next(&mut self, renderer: &Renderer) {
@@ -262,7 +293,8 @@ impl Draw for HUD {
         render_pass.set_bind_group(1, globals, &[]);
 
         // Рендерим элементы HUD
-        let mut elements: Vec<&HUDElement> = vec![&self.crosshair, &self.widget, &self.toolbar];
+        let mut elements: Vec<&HUDElement> =
+            vec![&self.crosshair, &self.widget, &self.toolbar, &self.toolbar_frame];
         if let Some(overlay) = &self.debug_overlay {
             if overlay.visible {
                 elements.push(&overlay.element);
@@ -547,4 +579,45 @@ fn glyph_bitmap(ch: char) -> [u8; FONT_HEIGHT] {
         ],
         _ => [0; FONT_HEIGHT],
     }
+}
+fn build_toolbar_frame(
+    selected_index: usize,
+    _palette_len: usize,
+    aspect_correction: f32,
+) -> (Vec<HUDVertex>, Vec<u32>) {
+    let mut verts = Vec::new();
+    let mut indices = Vec::new();
+
+    let base_x = -0.45;
+    let step = 0.18;
+    let center_y = -0.85;
+    let width = 0.18;
+    let height = 0.18;
+
+    let cx = base_x + selected_index as f32 * step;
+    let half_w = (width / 2.0) * aspect_correction;
+    let half_h = height / 2.0;
+
+    let rect = [
+        [cx - half_w, center_y - half_h],
+        [cx + half_w, center_y - half_h],
+        [cx + half_w, center_y + half_h],
+        [cx - half_w, center_y + half_h],
+    ];
+    let uvs = [
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [1.0, 1.0],
+        [0.0, 1.0],
+    ];
+
+    for i in 0..4 {
+        verts.push(HUDVertex {
+            position: rect[i],
+            uv: uvs[i],
+        });
+    }
+    indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+
+    (verts, indices)
 }
