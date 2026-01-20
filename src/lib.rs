@@ -149,7 +149,11 @@ impl<'a> State<'a> {
                                     .terrain
                                     .chunks
                                     .set_block_material(hit.position, MaterialType::AIR);
-                                self.terrain.mark_chunks_dirty(&updated);
+                                self.terrain.remesh_chunks_now(
+                                    &self.renderer.device,
+                                    &self.renderer.queue,
+                                    &updated,
+                                );
                                 println!("Блок удалён: {:?}", hit.position);
                             } else {
                                 println!("Нет блока для удаления");
@@ -171,7 +175,11 @@ impl<'a> State<'a> {
                                         .terrain
                                         .chunks
                                         .set_block_material(target_pos, material);
-                                    self.terrain.mark_chunks_dirty(&updated);
+                                    self.terrain.remesh_chunks_now(
+                                        &self.renderer.device,
+                                        &self.renderer.queue,
+                                        &updated,
+                                    );
                                     println!("Поставили блок в: {:?}", target_pos);
                                 }
                             } else {

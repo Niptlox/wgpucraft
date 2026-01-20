@@ -100,8 +100,7 @@ impl HUD {
         // Геометрия элементов HUD
         let (crosshair_verts, crosshair_indices) =
             create_hud_quad(0.0, 0.0, 0.06, 0.06, aspect_correction); // Размер прицела
-        let (widget_verts, widget_indices) =
-            create_hud_quad(0.0, -0.85, 0.7, 0.18, aspect_correction); // Окно хотбара
+        let (widget_verts, widget_indices) = build_widget_quad(aspect_correction); // Окно хотбара
 
         // Создаём модели
         let crosshair_model = Model::new(
@@ -264,8 +263,7 @@ impl HUD {
         )
         .expect("Failed to update crosshair model");
 
-        let (widget_verts, widget_indices) =
-            create_hud_quad(0.85, -0.85, 0.2, 0.2, self.aspect_correction);
+        let (widget_verts, widget_indices) = build_widget_quad(self.aspect_correction);
         self.widget.model = Model::new(
             &renderer.device,
             &Mesh {
@@ -348,6 +346,10 @@ pub fn create_hud_quad(
     let indices = vec![0u32, 1, 2, 0, 2, 3];
 
     (vertices, indices)
+}
+
+fn build_widget_quad(aspect_correction: f32) -> (Vec<HUDVertex>, Vec<u32>) {
+    create_hud_quad(0.0, -0.85, 0.7, 0.18, aspect_correction)
 }
 
 fn build_toolbar_model(

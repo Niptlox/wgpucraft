@@ -73,10 +73,15 @@ pub struct TerrainGen {
     highlight_pos: Option<Vector3<i32>>,
 }
 
+enum JobKind {
+    Generate { offset: Vector3<i32> },
+    Remesh,
+}
+
 struct ChunkJob {
     chunk_index: usize,
-    offset: Vector3<i32>,
     chunk: Arc<RwLock<Chunk>>,
+    kind: JobKind,
     save_dir: PathBuf,
 }
 
@@ -138,16 +143,29 @@ impl TerrainGen {
 
         std::thread::spawn(move || {
             while let Ok(job) = job_rx.recv() {
-                if let Ok(mut chunk) = job.chunk.write() {
-                    let path = job.save_dir.join(format!(
-                        "chunk_{}_{}_{}.bin",
-                        job.offset.x, job.offset.y, job.offset.z
-                    ));
-                    let loaded = path.exists() && chunk.load_from(&path, job.offset.into()).is_ok();
-                    if !loaded {
-                        chunk.update_blocks(job.offset.into(), &noise_for_worker, &PRAIRIE_PARAMS);
+                match job.kind {
+                    JobKind::Generate { offset } => {
+                        if let Ok(mut chunk) = job.chunk.write() {
+                            let path = job.save_dir.join(format!(
+                                "chunk_{}_{}_{}.bin",
+                                offset.x, offset.y, offset.z
+                            ));
+                            let loaded =
+                                path.exists() && chunk.load_from(&path, offset.into()).is_ok();
+                            if !loaded {
+                                chunk.update_blocks(offset.into(), &noise_for_worker, &PRAIRIE_PARAMS);
+                            }
+                            chunk.update_mesh(PRAIRIE_PARAMS, None);
+                            chunk.dirty = false;
+                        }
                     }
-                    chunk.update_mesh(PRAIRIE_PARAMS, None);
+                    JobKind::Remesh => {
+                        if let Ok(mut chunk) = job.chunk.write() {
+                            let y_range = chunk.dirty_y_range();
+                            chunk.update_mesh(PRAIRIE_PARAMS, y_range);
+                            chunk.dirty = false;
+                        }
+                    }
                 }
                 let _ = ready_tx.send(job.chunk_index);
             }
@@ -315,26 +333,50 @@ impl TerrainGen {
         }
     }
 
-    fn process_dirty_chunks(&mut self, device: &wgpu::Device, queue: &Queue, max_per_frame: usize) {
-        let mut processed = 0;
-        while processed < max_per_frame {
+    fn process_dirty_chunks(&mut self, _device: &wgpu::Device, _queue: &Queue, max_per_frame: usize) {
+        let mut scheduled = 0;
+        let queue_len = self.dirty_queue.len();
+        for _ in 0..queue_len {
+            if scheduled >= max_per_frame {
+                break;
+            }
             let Some(idx) = self.dirty_queue.pop_front() else { break };
-            self.dirty_set.remove(&idx);
-            if let Some(chunk_arc) = self.chunks.get_chunk(idx) {
-                let mut chunk = chunk_arc.write().unwrap();
-                if chunk.dirty {
-                    let y_range = chunk.dirty_y_range();
-                    chunk.update_mesh(PRAIRIE_PARAMS, y_range);
-                    chunk.dirty = false;
-                    let mesh = chunk.mesh.clone();
-                    drop(chunk);
-                    if let Some(chunk_model) = self.chunk_models.get(idx) {
-                        let mut model = chunk_model.write().unwrap();
-                        model.update(device, queue, &mesh);
-                    }
-                    processed += 1;
+
+            if self.pending_jobs.contains(&idx) {
+                // Уже в работе — оставим на очереди, но не зациклливаемся в этом кадре.
+                self.dirty_queue.push_back(idx);
+                continue;
+            }
+
+            let Some(chunk_arc) = self.chunks.get_chunk(idx) else {
+                self.dirty_set.remove(&idx);
+                continue;
+            };
+            {
+                let chunk = chunk_arc.read().unwrap();
+                if !chunk.dirty {
+                    self.dirty_set.remove(&idx);
+                    continue;
                 }
             }
+
+            if self.pending_jobs.len() >= MAX_JOBS_IN_FLIGHT {
+                // Нет свободного слота — вернём задачу в очередь.
+                self.dirty_queue.push_front(idx);
+                break;
+            }
+
+            let job = ChunkJob {
+                chunk_index: idx,
+                chunk: chunk_arc,
+                kind: JobKind::Remesh,
+                save_dir: self.save_dir.clone(),
+            };
+
+            self.pending_jobs.insert(idx);
+            self.dirty_set.remove(&idx);
+            let _ = self.job_tx.send(job);
+            scheduled += 1;
         }
     }
 
@@ -344,6 +386,50 @@ impl TerrainGen {
                 self.dirty_queue.push_back(idx);
             }
         }
+    }
+
+    /// Быстрое обновление мешей для нескольких чанков без ожидания фоновой очереди.
+    pub fn remesh_chunks_now(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &Queue,
+        indices: &[usize],
+    ) {
+        for &idx in indices {
+            // Если чанк уже в генерации/ремеше в фоне — не блокируемся.
+            if self.pending_jobs.contains(&idx) {
+                continue;
+            }
+
+            self.remove_from_dirty(idx);
+
+            if let Some(chunk_arc) = self.chunks.get_chunk(idx) {
+                let mut chunk = chunk_arc.write().unwrap();
+                if !chunk.dirty {
+                    continue;
+                }
+                let y_range = chunk.dirty_y_range();
+                chunk.update_mesh(PRAIRIE_PARAMS, y_range);
+                chunk.dirty = false;
+                let mesh = chunk.mesh.clone();
+                drop(chunk);
+                if let Some(chunk_model) = self.chunk_models.get(idx) {
+                    let mut model = chunk_model.write().unwrap();
+                    model.update(device, queue, &mesh);
+                }
+            }
+        }
+    }
+
+    fn remove_from_dirty(&mut self, idx: usize) {
+        self.dirty_set.remove(&idx);
+        let mut new_q = VecDeque::with_capacity(self.dirty_queue.len());
+        while let Some(val) = self.dirty_queue.pop_front() {
+            if val != idx {
+                new_q.push_back(val);
+            }
+        }
+        self.dirty_queue = new_q;
     }
 
     pub fn load_empty_chunks(&mut self, player_chunk: Vector3<i32>) {
@@ -376,8 +462,10 @@ impl TerrainGen {
                 if let Some(chunk_arc) = self.chunks.get_chunk(new_index) {
                     let job = ChunkJob {
                         chunk_index: new_index,
-                        offset: chunk_offset,
                         chunk: chunk_arc,
+                        kind: JobKind::Generate {
+                            offset: chunk_offset,
+                        },
                         save_dir: self.save_dir.clone(),
                     };
                     let _ = self.job_tx.send(job);
