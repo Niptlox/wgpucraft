@@ -31,6 +31,7 @@ pub struct HUD {
     selected_index: usize,
     debug_overlay: Option<DebugOverlay>,
     aspect_correction: f32,
+    icon_atlas_size: (f32, f32),
 }
 
 struct HUDElement {
@@ -76,6 +77,8 @@ impl HUD {
             "icons_atlas.png",
         )
         .unwrap();
+        let icon_atlas_size = icons_atlas_tex.size();
+        let icon_atlas_size = (icon_atlas_size.0 as f32, icon_atlas_size.1 as f32);
 
         // Создаём конвейер HUD с глобальным layout
         let pipeline = create_hud_pipeline(
@@ -126,6 +129,7 @@ impl HUD {
             &palette,
             selected_index,
             aspect_correction,
+            icon_atlas_size,
         );
 
         let (frame_verts, frame_indices) =
@@ -184,6 +188,7 @@ impl HUD {
             selected_index,
             debug_overlay,
             aspect_correction,
+            icon_atlas_size,
         }
     }
 
@@ -193,6 +198,7 @@ impl HUD {
             &self.palette,
             self.selected_index,
             self.aspect_correction,
+            self.icon_atlas_size,
         );
         let (frame_verts, frame_indices) = build_toolbar_frame(
             self.selected_index,
@@ -292,7 +298,7 @@ impl Draw for HUD {
 
         // Рендерим элементы HUD
         let mut elements: Vec<&HUDElement> =
-            vec![&self.crosshair, &self.widget, &self.toolbar, &self.toolbar_frame];
+            vec![&self.crosshair, &self.toolbar, &self.toolbar_frame];
         if let Some(overlay) = &self.debug_overlay {
             if overlay.visible {
                 elements.push(&overlay.element);
@@ -357,6 +363,7 @@ fn build_toolbar_model(
     palette: &[IconType],
     selected_index: usize,
     aspect_correction: f32,
+    icon_atlas_size: (f32, f32),
 ) -> Model<HUDVertex> {
     let mut verts = Vec::new();
     let mut indices = Vec::new();
@@ -369,7 +376,7 @@ fn build_toolbar_model(
         let center_x = base_x + i as f32 * step;
         let center_y = -0.85;
         let (quad_verts, quad_indices) =
-            icon.get_vertex_quad(center_x, center_y, width, height, aspect_correction);
+            icon.get_vertex_quad(center_x, center_y, width, height, aspect_correction, icon_atlas_size);
         let base_index = verts.len() as u32;
         verts.extend_from_slice(&quad_verts);
         indices.extend(quad_indices.iter().map(|idx| idx + base_index));

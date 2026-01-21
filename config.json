@@ -3,12 +3,12 @@
     "mouse_sensitivity": 0.35,
     "invert_y": false,
     "move_speed": 12.0,
-    "fly_speed": 18.0
+    "fly_speed": 48.0
   },
   "graphics": {
     "fps_cap": 60,
     "vsync": true,
-    "render_distance_chunks": 32,
+    "render_distance_chunks": 128,
     "fov_y_degrees": 60.0
   },
   "world": {

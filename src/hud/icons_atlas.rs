@@ -9,8 +9,7 @@ pub enum IconType {
     DEBUG,
 }
 
-const ICON_SIZE: (f32, f32) = (32.0, 32.0);
-const TEXTURE_SIZE: (f32, f32) = (512.0, 512.0);
+const ICON_GRID: (f32, f32) = (16.0, 16.0); // сетка 16x16 иконок
 
 impl IconType {
     pub fn all() -> Vec<IconType> {
@@ -23,19 +22,21 @@ impl IconType {
         ]
     }
 
-    fn get_uv_cords(&self) -> [f32; 4] {
+    fn get_uv_cords(&self, atlas_size: (f32, f32)) -> [f32; 4] {
         let (x, y) = match self {
-            IconType::ROCK => (0, 0),
+            IconType::ROCK => (3, 0),
             IconType::GRASS => (1, 0),
             IconType::DIRT => (2, 0),
-            IconType::WATER => (3, 0),
-            IconType::DEBUG => (4, 0),
+            IconType::WATER => (9, 0),
+            IconType::DEBUG => (0, 7),
         };
 
-        let u_min = (x as f32 * ICON_SIZE.0) / TEXTURE_SIZE.0;
-        let v_min = (y as f32 * ICON_SIZE.1) / TEXTURE_SIZE.1;
-        let u_max = u_min + (ICON_SIZE.0 / TEXTURE_SIZE.0);
-        let v_max = v_min + (ICON_SIZE.1 / TEXTURE_SIZE.1);
+        let tile_w = atlas_size.0 / ICON_GRID.0;
+        let tile_h = atlas_size.1 / ICON_GRID.1;
+        let u_min = (x as f32 * tile_w) / atlas_size.0;
+        let v_min = (y as f32 * tile_h) / atlas_size.1;
+        let u_max = u_min + (tile_w / atlas_size.0);
+        let v_max = v_min + (tile_h / atlas_size.1);
 
         [u_min, v_min, u_max, v_max]
     }
@@ -67,8 +68,9 @@ impl IconType {
         width: f32,
         height: f32,
         aspect_correction: f32,
+        atlas_size: (f32, f32),
     ) -> ([HUDVertex; 4], [u32; 6]) {
-        let uv = self.get_uv_cords();
+        let uv = self.get_uv_cords(atlas_size);
         let half_width = (width / 2.0) * aspect_correction;
         let half_height = height / 2.0;
 

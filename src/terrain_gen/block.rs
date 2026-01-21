@@ -4,8 +4,6 @@ use crate::render::atlas::MaterialType;
 
 use crate::render::pipelines::terrain::BlockVertex;
 
-use super::chunk::CHUNK_AREA;
-
 pub fn quad_vertex(
     pos: [i8; 3],
     material_type: MaterialType,
@@ -137,17 +135,13 @@ impl Quad {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Block {
-    pub position: [i32; 3],
     pub material_type: MaterialType,
-    chunk_offset: [i32; 3],
 }
 
 impl Block {
-    pub fn new(material_type: MaterialType, position: [i32; 3], chunk_offset: [i32; 3]) -> Self {
+    pub fn new(material_type: MaterialType) -> Self {
         Self {
-            position,
             material_type,
-            chunk_offset,
         }
     }
 
@@ -159,21 +153,7 @@ impl Block {
         !self.is_transparent()
     }
 
-    pub fn get_vec_position(&self) -> Vector3<i32> {
-        Vector3::new(self.position[0], self.position[1], self.position[2])
-    }
-
-    // Получить мировую позицию блока
-    pub fn get_world_position(&self) -> [i32; 3] {
-        [
-            self.position[0] + (self.chunk_offset[0] * CHUNK_AREA as i32),
-            self.position[1],
-            self.position[2] + (self.chunk_offset[2] * CHUNK_AREA as i32),
-        ]
-    }
-
-    pub fn update(&mut self, new_material_type: MaterialType, offset: [i32; 3]) {
-        self.chunk_offset = offset;
+    pub fn update(&mut self, new_material_type: MaterialType) {
         self.material_type = new_material_type;
     }
 }
@@ -181,9 +161,7 @@ impl Block {
 impl Default for Block {
     fn default() -> Self {
         Block {
-            position: [0, 0, 0],
             material_type: MaterialType::AIR,
-            chunk_offset: [0, 0, 0],
         }
     }
 }

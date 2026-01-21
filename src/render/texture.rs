@@ -6,6 +6,8 @@ pub struct Texture {
     pub tex: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Texture {
@@ -46,7 +48,13 @@ impl Texture {
             ..Default::default()
         });
 
-        Self { tex, view, sampler }
+        Self {
+            tex,
+            view,
+            sampler,
+            width: config.width,
+            height: config.height,
+        }
     }
 
     pub fn from_bytes(
@@ -133,6 +141,8 @@ impl Texture {
             tex: texture,
             view,
             sampler,
+            width,
+            height,
         })
     }
 
@@ -158,5 +168,9 @@ impl Texture {
             },
             size,
         );
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
     }
 }
