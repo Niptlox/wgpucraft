@@ -4,6 +4,7 @@ pub mod hud;
 pub mod launcher;
 pub mod player;
 pub mod render;
+pub mod ui;
 pub mod terrain_gen;
 
 use hud::{HUD, OverlayStats, icons_atlas::IconType};
@@ -29,10 +30,13 @@ use winit::{
 #[cfg(feature = "tracy")]
 use tracy_client::{frame_mark, span};
 
+use hud::MenuAction;
+use hud::MenuPage;
+
 #[derive(PartialEq)]
 pub enum GameState {
     PLAYING,
-    PAUSED,
+    MENU,
 }
 
 pub struct State<'a> {
@@ -48,6 +52,7 @@ pub struct State<'a> {
     last_frame_time: Instant,
     frame_target: Option<Duration>,
     selected_block: Option<cgmath::Vector3<i32>>,
+    menu_page: MenuPage,
 }
 
 impl<'a> State<'a> {
@@ -71,6 +76,7 @@ impl<'a> State<'a> {
                     ),
                 }),
             config.debug.show_overlay,
+            &config.ui,
         );
 
         let globals_bind_group = renderer.bind_globals(&data);
@@ -105,6 +111,7 @@ impl<'a> State<'a> {
             last_frame_time: Instant::now(),
             frame_target,
             selected_block: None,
+            menu_page: MenuPage::Main,
         }
     }
 
@@ -125,10 +132,25 @@ impl<'a> State<'a> {
                     self.render_frame(elwt);
                 }
 
+                WindowEvent::CursorMoved { position, .. } => {
+                    if self.state == GameState::MENU {
+                        let clip_x =
+                            (position.x as f32 / self.renderer.size.width as f32) * 2.0 - 1.0;
+                        let clip_y =
+                            -((position.y as f32 / self.renderer.size.height as f32) * 2.0 - 1.0);
+                        self.hud
+                            .hover_menu(clip_x as f32, clip_y as f32, &self.renderer.queue);
+                    }
+                }
+
                 // Обработка событий мыши
                 WindowEvent::MouseInput { state, button, .. } => {
-                    if self.state == GameState::PAUSED && state == ElementState::Pressed {
-                        self.enter_play_mode();
+                    if self.state == GameState::MENU {
+                        if state == ElementState::Pressed && button == MouseButton::Left {
+                            if let Some(action) = self.hud.click_menu() {
+                                self.handle_menu_action(action, elwt);
+                            }
+                        }
                         return;
                     }
 
@@ -236,8 +258,8 @@ impl<'a> State<'a> {
                         },
                     ..
                 } => match self.state {
-                    GameState::PAUSED => self.enter_play_mode(),
-                    GameState::PLAYING => self.enter_pause_mode(),
+                    GameState::MENU => self.enter_play_mode(),
+                    GameState::PLAYING => self.enter_menu_mode(),
                 },
                 WindowEvent::KeyboardInput {
                     event:
@@ -288,12 +310,14 @@ impl<'a> State<'a> {
         }
 
         self.last_frame_time = now;
-        self.player.update(elapsed, &self.terrain.chunks);
-        self.terrain.update(
-            &self.renderer.device,
-            &self.renderer.queue,
-            &self.player.camera.position,
-        );
+        if self.state == GameState::PLAYING {
+            self.player.update(elapsed, &self.terrain.chunks);
+            self.terrain.update(
+                &self.renderer.device,
+                &self.renderer.queue,
+                &self.player.camera.position,
+            );
+        }
 
         #[cfg(feature = "tracy")]
         let _inner_span = span!("rendering frame"); // <- Начало участка отрисовки кадра
@@ -337,12 +361,16 @@ impl<'a> State<'a> {
         self.window.set_cursor_visible(false);
         self.state = GameState::PLAYING;
         self.last_frame_time = Instant::now();
+        self.hud.close_menu();
     }
 
-    fn enter_pause_mode(&mut self) {
+    fn enter_menu_mode(&mut self) {
         let _ = self.window.set_cursor_grab(CursorGrabMode::None);
         self.window.set_cursor_visible(true);
-        self.state = GameState::PAUSED;
+        self.state = GameState::MENU;
+        self.menu_page = MenuPage::Main;
+        self.hud
+            .open_menu(self.menu_page, &self.config, &self.renderer.queue);
     }
 
     pub fn initialize(&mut self) {
@@ -411,5 +439,196 @@ impl<'a> State<'a> {
             self.terrain
                 .update_highlight_model(&self.renderer.device, hit);
         }
+    }
+
+    fn reload_world(&mut self) {
+        self.terrain = TerrainGen::new(&self.renderer, &self.config);
+        let camera = Camera::new(
+            &self.renderer,
+            (8.0, 12.0, 8.0),
+            cgmath::Deg(-90.0),
+            cgmath::Deg(-20.0),
+            self.config.graphics.render_distance_chunks,
+            self.config.input.move_speed,
+            self.config.input.mouse_sensitivity,
+            self.config.input.invert_y,
+            self.config.graphics.fov_y_degrees,
+        );
+        self.player = Player::new(camera, self.config.input.move_speed, &self.config);
+        self.player
+            .set_mode(self.config.player.mode.clone(), &self.config);
+    }
+
+    fn handle_menu_action(&mut self, action: MenuAction, elwt: &EventLoopWindowTarget<()>) {
+        match action {
+            MenuAction::Resume => {
+                self.enter_play_mode();
+            }
+            MenuAction::CreateWorld => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                self.config.world.world_name = format!("world_{}", now);
+                self.config.world.seed =
+                    (now as u32).wrapping_mul(1664525).wrapping_add(1013904223);
+                self.reload_world();
+                self.menu_page = MenuPage::Main;
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::OpenWorld => {
+                if let Some(name) = Self::pick_existing_world() {
+                    self.config.world.world_name = name;
+                    self.reload_world();
+                }
+                self.menu_page = MenuPage::Main;
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::SaveConfig => {
+                if let Err(e) = self.config.write_to("config.json") {
+                    eprintln!("Не удалось сохранить config: {e}");
+                }
+                // keep page
+            }
+            MenuAction::OpenSettings => {
+                self.menu_page = MenuPage::Settings;
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::OpenAdvanced => {
+                self.menu_page = MenuPage::Advanced;
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::BackToMain => {
+                self.menu_page = MenuPage::Main;
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleFpsCap => {
+                let caps = [30, 60, 120, 0];
+                let mut idx = caps
+                    .iter()
+                    .position(|v| *v == self.config.graphics.fps_cap)
+                    .unwrap_or(1);
+                idx = (idx + 1) % caps.len();
+                self.config.graphics.fps_cap = caps[idx];
+                self.frame_target = self.config.target_frame_time();
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::ToggleVsync => {
+                self.config.graphics.vsync = !self.config.graphics.vsync;
+                self.renderer
+                    .reconfigure_present_mode(self.config.present_mode());
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleRenderDistance => {
+                let opts = [8, 16, 24, 32, 48];
+                let mut idx = opts
+                    .iter()
+                    .position(|v| *v == self.config.graphics.render_distance_chunks)
+                    .unwrap_or(3);
+                idx = (idx + 1) % opts.len();
+                self.config.graphics.render_distance_chunks = opts[idx];
+                self.reload_world();
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleFov => {
+                let opts = [60.0f32, 75.0, 90.0, 100.0];
+                let mut idx = opts
+                    .iter()
+                    .position(|v| (*v - self.config.graphics.fov_y_degrees).abs() < f32::EPSILON)
+                    .unwrap_or(0);
+                idx = (idx + 1) % opts.len();
+                self.config.graphics.fov_y_degrees = opts[idx];
+                self.player
+                    .camera
+                    .projection
+                    .set_fovy_deg(self.config.graphics.fov_y_degrees);
+                self.player.camera.update_view();
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::ToggleWireframe => {
+                self.config.debug.wireframe = !self.config.debug.wireframe;
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleJobsInFlight => {
+                let opts = [2usize, 4, 8, 12, 16];
+                let mut idx = opts
+                    .iter()
+                    .position(|v| *v == self.config.terrain.jobs_in_flight)
+                    .unwrap_or(2);
+                idx = (idx + 1) % opts.len();
+                self.config.terrain.jobs_in_flight = opts[idx];
+                self.reload_world();
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleDirtyPerFrame => {
+                let opts = [4usize, 8, 16, 32, 64];
+                let mut idx = opts
+                    .iter()
+                    .position(|v| *v == self.config.terrain.dirty_chunks_per_frame)
+                    .unwrap_or(3);
+                idx = (idx + 1) % opts.len();
+                self.config.terrain.dirty_chunks_per_frame = opts[idx];
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleMinVertexCap => {
+                let opts = [2048usize, 4096, 8192, 16384];
+                let mut idx = opts
+                    .iter()
+                    .position(|v| *v == self.config.terrain.min_vertex_cap)
+                    .unwrap_or(1);
+                idx = (idx + 1) % opts.len();
+                self.config.terrain.min_vertex_cap = opts[idx];
+                self.reload_world();
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleMinIndexCap => {
+                let opts = [4096usize, 8192, 16384, 32768];
+                let mut idx = opts
+                    .iter()
+                    .position(|v| *v == self.config.terrain.min_index_cap)
+                    .unwrap_or(1);
+                idx = (idx + 1) % opts.len();
+                self.config.terrain.min_index_cap = opts[idx];
+                self.reload_world();
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::CycleLandLevel => {
+                let opts = [6usize, 9, 12, 15];
+                let mut idx = opts
+                    .iter()
+                    .position(|v| *v == self.config.terrain.land_level)
+                    .unwrap_or(1);
+                idx = (idx + 1) % opts.len();
+                self.config.terrain.land_level = opts[idx];
+                self.reload_world();
+                self.hud
+                    .open_menu(self.menu_page, &self.config, &self.renderer.queue);
+            }
+            MenuAction::Quit => elwt.exit(),
+        }
+    }
+
+    fn pick_existing_world() -> Option<String> {
+        let mut entries = std::fs::read_dir("saves").ok()?;
+        while let Some(Ok(entry)) = entries.next() {
+            if entry.file_type().ok()?.is_dir() {
+                return entry.file_name().into_string().ok();
+            }
+        }
+        None
     }
 }

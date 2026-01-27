@@ -1,4 +1,12 @@
+use crate::{
+    core::config::AppConfig,
+    ui::{
+        Align, BitmapFont, ButtonSpec, Layout as UiLayout, MeasureCtx, RectSpec, UiElement, UiNode,
+        Val,
+    },
+};
 use icons_atlas::IconType;
+use std::sync::Arc;
 
 use crate::render::{
     mesh::Mesh,
@@ -27,6 +35,7 @@ pub struct HUD {
     widget: HUDElement,
     toolbar: HUDElement,
     toolbar_frame: HUDElement,
+    menu: MenuOverlay,
     palette: Vec<IconType>,
     selected_index: usize,
     debug_overlay: Option<DebugOverlay>,
@@ -40,14 +49,129 @@ struct HUDElement {
     model: Model<HUDVertex>,
 }
 
+#[derive(Clone)]
+struct MenuEntry {
+    title: String,
+    detail: String,
+    action: MenuAction,
+}
+
+struct ButtonRect {
+    action: MenuAction,
+    rect: [f32; 4],
+}
+
+struct MenuOverlay {
+    element: HUDElement,
+    buffer: Vec<u8>,
+    size: (u32, u32),
+    entries: Vec<MenuEntry>,
+    buttons: Vec<ButtonRect>,
+    visible: bool,
+    title: String,
+    aspect_correction: f32,
+    hovered: Option<MenuAction>,
+    font: Arc<BitmapFont>,
+    resolved: Vec<crate::ui::ResolvedNode>,
+    measure: MeasureCtx,
+    text_scale: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAction {
+    Resume,
+    CreateWorld,
+    OpenWorld,
+    SaveConfig,
+    OpenSettings,
+    OpenAdvanced,
+    BackToMain,
+    CycleFpsCap,
+    ToggleVsync,
+    CycleRenderDistance,
+    CycleFov,
+    ToggleWireframe,
+    CycleJobsInFlight,
+    CycleDirtyPerFrame,
+    CycleMinVertexCap,
+    CycleMinIndexCap,
+    CycleLandLevel,
+    Quit,
+}
+
+impl MenuAction {
+    fn key(&self) -> &'static str {
+        match self {
+            MenuAction::Resume => "resume",
+            MenuAction::CreateWorld => "create_world",
+            MenuAction::OpenWorld => "open_world",
+            MenuAction::SaveConfig => "save_config",
+            MenuAction::OpenSettings => "open_settings",
+            MenuAction::OpenAdvanced => "open_advanced",
+            MenuAction::BackToMain => "back_to_main",
+            MenuAction::CycleFpsCap => "cycle_fps_cap",
+            MenuAction::ToggleVsync => "toggle_vsync",
+            MenuAction::CycleRenderDistance => "cycle_render_distance",
+            MenuAction::CycleFov => "cycle_fov",
+            MenuAction::ToggleWireframe => "toggle_wireframe",
+            MenuAction::CycleJobsInFlight => "cycle_jobs_in_flight",
+            MenuAction::CycleDirtyPerFrame => "cycle_dirty_per_frame",
+            MenuAction::CycleMinVertexCap => "cycle_min_vertex_cap",
+            MenuAction::CycleMinIndexCap => "cycle_min_index_cap",
+            MenuAction::CycleLandLevel => "cycle_land_level",
+            MenuAction::Quit => "quit",
+        }
+    }
+
+    fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "resume" => Some(MenuAction::Resume),
+            "create_world" => Some(MenuAction::CreateWorld),
+            "open_world" => Some(MenuAction::OpenWorld),
+            "save_config" => Some(MenuAction::SaveConfig),
+            "open_settings" => Some(MenuAction::OpenSettings),
+            "open_advanced" => Some(MenuAction::OpenAdvanced),
+            "back_to_main" => Some(MenuAction::BackToMain),
+            "cycle_fps_cap" => Some(MenuAction::CycleFpsCap),
+            "toggle_vsync" => Some(MenuAction::ToggleVsync),
+            "cycle_render_distance" => Some(MenuAction::CycleRenderDistance),
+            "cycle_fov" => Some(MenuAction::CycleFov),
+            "toggle_wireframe" => Some(MenuAction::ToggleWireframe),
+            "cycle_jobs_in_flight" => Some(MenuAction::CycleJobsInFlight),
+            "cycle_dirty_per_frame" => Some(MenuAction::CycleDirtyPerFrame),
+            "cycle_min_vertex_cap" => Some(MenuAction::CycleMinVertexCap),
+            "cycle_min_index_cap" => Some(MenuAction::CycleMinIndexCap),
+            "cycle_land_level" => Some(MenuAction::CycleLandLevel),
+            "quit" => Some(MenuAction::Quit),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuPage {
+    Main,
+    Settings,
+    Advanced,
+}
+
 impl HUD {
     pub fn new(
         renderer: &Renderer,
         global_layout: &GlobalsLayouts,
         shader: wgpu::ShaderModule,
         show_debug_overlay: bool,
+        ui_cfg: &crate::core::config::UiConfig,
     ) -> Self {
         let aspect_correction = renderer.size.height as f32 / renderer.size.width as f32;
+        let font = Arc::new(
+            BitmapFont::load_from_path(
+                &ui_cfg.font_path,
+                ui_cfg.font_size,
+                ui_cfg.font_weight_px,
+            )
+            .expect("Failed to load UI font from config"),
+        );
         let palette = IconType::all();
         let selected_index = 0;
         // Загрузка текстур интерфейса
@@ -172,6 +296,8 @@ impl HUD {
             Some(DebugOverlay::new(
                 renderer,
                 global_layout,
+                font.clone(),
+                ui_cfg.text_scale,
                 aspect_correction,
             ))
         } else {
@@ -184,6 +310,14 @@ impl HUD {
             widget,
             toolbar,
             toolbar_frame,
+            menu: MenuOverlay::new(
+                &renderer.device,
+                &renderer.queue,
+                global_layout,
+                font,
+                ui_cfg.text_scale,
+                aspect_correction,
+            ),
             palette,
             selected_index,
             debug_overlay,
@@ -284,6 +418,46 @@ impl HUD {
         if let Some(overlay) = &mut self.debug_overlay {
             overlay.update_layout(renderer, self.aspect_correction);
         }
+
+        self.menu.update_layout(
+            &renderer.device,
+            &renderer.queue,
+            &renderer.layouts.global,
+            self.aspect_correction,
+        );
+    }
+
+    pub fn open_menu(&mut self, page: MenuPage, config: &AppConfig, queue: &wgpu::Queue) {
+        let entries = match page {
+            MenuPage::Main => build_main_menu(),
+            MenuPage::Settings => build_settings_menu(config),
+            MenuPage::Advanced => build_advanced_menu(config),
+        };
+        let title = match page {
+            MenuPage::Main => "Меню",
+            MenuPage::Settings => "Настройки",
+            MenuPage::Advanced => "Продвинутые настройки",
+        };
+        self.menu.set_entries(title, entries, queue);
+        self.menu.visible = true;
+    }
+
+    pub fn close_menu(&mut self) {
+        self.menu.visible = false;
+    }
+
+    pub fn hover_menu(&mut self, clip_x: f32, clip_y: f32, queue: &wgpu::Queue) {
+        if self.menu.visible {
+            self.menu.hover_at(clip_x, clip_y, queue);
+        }
+    }
+
+    pub fn click_menu(&self) -> Option<MenuAction> {
+        if self.menu.visible {
+            self.menu.click()
+        } else {
+            None
+        }
     }
 }
 
@@ -299,9 +473,15 @@ impl Draw for HUD {
         // Рендерим элементы HUD
         let mut elements: Vec<&HUDElement> =
             vec![&self.crosshair, &self.toolbar, &self.toolbar_frame];
+        if self.menu.visible {
+            elements.push(&self.menu.element);
+        }
         if let Some(overlay) = &self.debug_overlay {
             if overlay.visible {
-                elements.push(&overlay.element);
+                // прячем оверлей под меню, чтобы не перекрывать кнопки
+                if !self.menu.visible {
+                    elements.push(&overlay.element);
+                }
             }
         }
 
@@ -313,6 +493,368 @@ impl Draw for HUD {
         }
 
         Ok(())
+    }
+}
+
+impl MenuOverlay {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        global_layout: &GlobalsLayouts,
+        font: Arc<BitmapFont>,
+        text_scale: f32,
+        aspect_correction: f32,
+    ) -> Self {
+        let size = (512u32, 512u32);
+        let buffer = vec![0u8; (size.0 * size.1 * 4) as usize];
+        let texture =
+            Texture::from_rgba(device, queue, &buffer, size.0, size.1, "menu_overlay").unwrap();
+        let bind_group = global_layout.bind_hud_texture(device, &texture, None);
+        let (verts, indices) = create_hud_quad(0.0, 0.0, 1.4, 1.4, aspect_correction);
+        let model = Model::new(device, &Mesh { verts, indices }).unwrap();
+
+        Self {
+            element: HUDElement {
+                texture,
+                bind_group,
+                model,
+            },
+            buffer,
+            size,
+            entries: Vec::new(),
+            buttons: Vec::new(),
+            visible: false,
+            title: String::new(),
+            aspect_correction,
+            hovered: None,
+            font: font.clone(),
+            resolved: Vec::new(),
+            measure: MeasureCtx {
+                font: Some(font),
+                text_scale,
+            },
+            text_scale,
+        }
+    }
+
+    fn update_layout(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        global_layout: &GlobalsLayouts,
+        aspect_correction: f32,
+    ) {
+        self.aspect_correction = aspect_correction;
+        let (verts, indices) = create_hud_quad(0.0, 0.0, 1.4, 1.4, aspect_correction);
+        self.element.model = Model::new(device, &Mesh { verts, indices }).unwrap();
+        // Rebind to keep texture alive after device change (resize doesn't change device, but safe).
+        self.element.bind_group =
+            global_layout.bind_hud_texture(device, &self.element.texture, None);
+        // redraw with current entries to avoid stale hover rectangles
+        if !self.entries.is_empty() {
+            self.rebuild_layout();
+            self.draw(queue);
+        }
+    }
+
+    fn set_entries(
+        &mut self,
+        title: impl Into<String>,
+        entries: Vec<MenuEntry>,
+        queue: &wgpu::Queue,
+    ) {
+        self.title = title.into();
+        self.entries = entries;
+        self.hovered = None;
+        self.rebuild_layout();
+        self.draw(queue);
+    }
+
+    fn rebuild_layout(&mut self) {
+        let layout = self.build_tree();
+        self.resolved =
+            layout.resolve_tree([self.size.0 as f32, self.size.1 as f32], &self.measure);
+        self.buttons = self
+            .resolved
+            .iter()
+            .filter_map(|node| {
+                let action = node
+                    .id
+                    .as_deref()
+                    .and_then(MenuAction::from_key)?;
+                Some(ButtonRect {
+                    action,
+                    rect: node.rect,
+                })
+            })
+            .collect();
+    }
+
+    fn build_tree(&self) -> UiNode {
+        let mut children = Vec::new();
+
+        if !self.title.is_empty() {
+            children.push(UiNode {
+                id: Some("menu_title".into()),
+                layout: UiLayout::Absolute {
+                    rect: RectSpec {
+                        x: Val::Percent(0.0),
+                        y: Val::Px(20.0),
+                        w: Val::Percent(1.0),
+                        h: Val::Px(32.0),
+                    },
+                    anchor: None,
+                },
+                children: Vec::new(),
+                element: Some(UiElement::Label(crate::ui::LabelSpec {
+                    text: self.title.clone(),
+                    font_size: 16.0,
+                })),
+            });
+        }
+
+        let button_nodes = self
+            .entries
+            .iter()
+            .map(|entry| UiNode {
+                id: Some(entry.action.key().to_string()),
+                layout: UiLayout::Absolute {
+                    rect: RectSpec {
+                        x: Val::Percent(0.0),
+                        y: Val::Px(0.0),
+                        w: Val::Percent(1.0),
+                        h: Val::Px(60.0),
+                    },
+                    anchor: None,
+                },
+                children: Vec::new(),
+                element: Some(UiElement::Button(ButtonSpec {
+                    text: entry.title.clone(),
+                    detail: if entry.detail.is_empty() {
+                        None
+                    } else {
+                        Some(entry.detail.clone())
+                    },
+                    padding: 14.0,
+                    min_height: 60.0,
+                })),
+            })
+            .collect::<Vec<_>>();
+
+        children.push(UiNode {
+            id: Some("menu_buttons".into()),
+            layout: UiLayout::FlexColumn {
+                gap: 10.0,
+                padding: 60.0,
+                align: Align::Stretch,
+            },
+            children: button_nodes,
+            element: Some(UiElement::Panel {
+                color: [18, 22, 30, 220],
+            }),
+        });
+
+        UiNode {
+            id: Some("menu_root".into()),
+            layout: UiLayout::Absolute {
+                rect: RectSpec {
+                    x: Val::Px(0.0),
+                    y: Val::Px(0.0),
+                    w: Val::Percent(1.0),
+                    h: Val::Percent(1.0),
+                },
+                anchor: None,
+            },
+            children,
+            element: None,
+        }
+    }
+
+    fn hover_at(&mut self, clip_x: f32, clip_y: f32, queue: &wgpu::Queue) {
+        // Map clip coords that cover only the menu quad (width/height = 1.4) back into texture pixels.
+        // Quad bounds in clip space (center at 0, height = 1.4, width scaled by aspect).
+        let half_w = (1.4 / 2.0) * self.aspect_correction;
+        let half_h = 1.4 / 2.0;
+        let x_min = -half_w;
+        let x_max = half_w;
+        let y_min = -half_h;
+        let y_max = half_h;
+
+        if clip_x < x_min || clip_x > x_max || clip_y < y_min || clip_y > y_max {
+            if self.hovered.is_some() {
+                self.hovered = None;
+                self.draw(queue);
+            }
+            return;
+        }
+
+        let norm_x = (clip_x - x_min) / (x_max - x_min);
+        let norm_y = (clip_y - y_min) / (y_max - y_min); // clip y up; texture y down handled below
+
+        let px_x = (norm_x * self.size.0 as f32).clamp(0.0, self.size.0 as f32 - 1.0);
+        let px_y = ((1.0 - norm_y) * self.size.1 as f32).clamp(0.0, self.size.1 as f32 - 1.0);
+
+        let mut new_hover = None;
+        for btn in &self.buttons {
+            let [x, y, w, h] = btn.rect;
+            if px_x >= x && px_x <= x + w && px_y >= y && px_y <= y + h {
+                new_hover = Some(btn.action);
+                break;
+            }
+        }
+        if new_hover != self.hovered {
+            self.hovered = new_hover;
+            self.draw(queue);
+        }
+    }
+
+    fn click(&self) -> Option<MenuAction> {
+        self.hovered
+    }
+
+    fn draw(&mut self, queue: &wgpu::Queue) {
+        self.clear([8, 10, 14, 200]);
+
+        let resolved = self.resolved.clone();
+        for node in resolved.iter() {
+            if let Some(el) = &node.element {
+                match el {
+                    UiElement::Panel { color } => self.draw_panel_rect(node.rect, *color),
+                    UiElement::Button(btn) => {
+                        self.draw_button(node.rect, btn, node.id.as_deref())
+                    }
+                    UiElement::Label(label) => self.draw_label(node.rect, label),
+                    UiElement::Image { .. } | UiElement::Spacer { .. } => {}
+                }
+            }
+        }
+        self.element
+            .texture
+            .write_rgba(queue, &self.buffer, self.size.0, self.size.1);
+    }
+
+    fn draw_panel_rect(&mut self, rect: [f32; 4], color: [u8; 4]) {
+        let x = rect[0].round() as i32;
+        let y = rect[1].round() as i32;
+        let w = rect[2].round() as i32;
+        let h = rect[3].round() as i32;
+        self.fill_rect(x, y, w, h, color);
+        self.stroke_rect(x, y, w, h, 3, [80, 120, 200, 255]);
+    }
+
+    fn draw_button(&mut self, rect: [f32; 4], spec: &ButtonSpec, id: Option<&str>) {
+        let hovered = id
+            .and_then(MenuAction::from_key)
+            .map(|a| Some(a) == self.hovered)
+            .unwrap_or(false);
+        let base = if hovered {
+            [90, 140, 255, 220]
+        } else {
+            [40, 60, 90, 200]
+        };
+        let title_color = if hovered {
+            [255, 255, 255, 255]
+        } else {
+            [210, 220, 235, 255]
+        };
+        let detail_color = if hovered {
+            [200, 230, 255, 255]
+        } else {
+            [160, 170, 190, 255]
+        };
+        let x = rect[0].round() as i32;
+        let y = rect[1].round() as i32;
+        let w = rect[2].round() as i32;
+        let h = rect[3].round() as i32;
+        self.fill_rect(x, y, w, h, base);
+
+        let line_h = self.font.height() as i32;
+        let mut cursor_y = y + spec.padding as i32;
+        if let Some(detail) = &spec.detail {
+            self.draw_text(detail, x + spec.padding as i32, cursor_y, detail_color);
+            cursor_y += line_h + 4;
+        }
+        self.draw_text(&spec.text, x + spec.padding as i32, cursor_y, title_color);
+    }
+
+    fn draw_label(&mut self, rect: [f32; 4], label: &crate::ui::LabelSpec) {
+        let (w, h) = self.font.measure_text(&label.text);
+        let scale = self.text_scale;
+        let x = rect[0] + (rect[2] - w * scale) * 0.5;
+        let y = rect[1] + (rect[3] - h * scale) * 0.5;
+        self.draw_text(&label.text, x.round() as i32, y.round() as i32, [255, 220, 120, 255]);
+    }
+
+    fn clear(&mut self, color: [u8; 4]) {
+        for chunk in self.buffer.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&color);
+        }
+    }
+
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: [u8; 4]) {
+        for yy in y.max(0)..(y + h).min(self.size.1 as i32) {
+            for xx in x.max(0)..(x + w).min(self.size.0 as i32) {
+                let idx = ((yy as u32 * self.size.0 + xx as u32) * 4) as usize;
+                self.buffer[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    fn stroke_rect(&mut self, x: i32, y: i32, w: i32, h: i32, thickness: i32, color: [u8; 4]) {
+        // top/bottom
+        self.fill_rect(x, y, w, thickness, color);
+        self.fill_rect(x, y + h - thickness, w, thickness, color);
+        // sides
+        self.fill_rect(x, y, thickness, h, color);
+        self.fill_rect(x + w - thickness, y, thickness, h, color);
+    }
+
+    fn draw_text(&mut self, text: &str, start_x: i32, start_y: i32, color: [u8; 4]) {
+        let mut cursor_x = start_x;
+        for ch in text.chars() {
+            self.draw_char(ch, cursor_x, start_y, color, self.text_scale);
+            cursor_x = (cursor_x as f32 + self.font.advance(ch) * self.text_scale).round() as i32;
+        }
+    }
+
+    fn draw_char(
+        &mut self,
+        ch: char,
+        start_x: i32,
+        start_y: i32,
+        color: [u8; 4],
+        scale: f32,
+    ) {
+        if let Some(glyph) = self.font.bitmap(ch).cloned() {
+            let w = glyph.width as i32;
+            let h = glyph.height as i32;
+            let scale = scale.max(0.1);
+            for row in 0..h {
+                let y0 = start_y as f32 + row as f32 * scale;
+                let base = row as usize * glyph.width;
+                for col in 0..w {
+                    let alpha = glyph.bitmap[base + col as usize];
+                    if alpha > 0 {
+                        let x0 = start_x as f32 + col as f32 * scale;
+                        self.fill_rect(
+                            x0.round() as i32,
+                            y0.round() as i32,
+                            scale.ceil() as i32,
+                            scale.ceil() as i32,
+                            color,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn pixel(&mut self, x: i32, y: i32, color: [u8; 4]) {
+        if x < 0 || y < 0 || x as u32 >= self.size.0 || y as u32 >= self.size.1 {
+            return;
+        }
+        let idx = ((y as u32 * self.size.0 + x as u32) * 4) as usize;
+        self.buffer[idx..idx + 4].copy_from_slice(&color);
     }
 }
 
@@ -329,22 +871,22 @@ pub fn create_hud_quad(
     let vertices = vec![
         // Верхний левый угол
         HUDVertex {
-            position: [center_x - half_w, center_y - half_h],
+            position: [center_x - half_w, center_y + half_h],
             uv: [0.0, 0.0],
         },
         // Верхний правый угол
         HUDVertex {
-            position: [center_x + half_w, center_y - half_h],
+            position: [center_x + half_w, center_y + half_h],
             uv: [1.0, 0.0],
         },
         // Нижний правый угол
         HUDVertex {
-            position: [center_x + half_w, center_y + half_h],
+            position: [center_x + half_w, center_y - half_h],
             uv: [1.0, 1.0],
         },
         // Нижний левый угол
         HUDVertex {
-            position: [center_x - half_w, center_y + half_h],
+            position: [center_x - half_w, center_y - half_h],
             uv: [0.0, 1.0],
         },
     ];
@@ -396,10 +938,18 @@ struct DebugOverlay {
     buffer: Vec<u8>,
     size: (u32, u32),
     visible: bool,
+    font: Arc<BitmapFont>,
+    text_scale: f32,
 }
 
 impl DebugOverlay {
-    fn new(renderer: &Renderer, global_layout: &GlobalsLayouts, aspect_correction: f32) -> Self {
+    fn new(
+        renderer: &Renderer,
+        global_layout: &GlobalsLayouts,
+        font: Arc<BitmapFont>,
+        text_scale: f32,
+        aspect_correction: f32,
+    ) -> Self {
         let size = (256u32, 96u32);
         let buffer = vec![0u8; (size.0 * size.1 * 4) as usize];
         let texture = Texture::from_rgba(
@@ -413,7 +963,7 @@ impl DebugOverlay {
         .expect("Failed to create debug overlay texture");
 
         let bind_group = global_layout.bind_hud_texture(&renderer.device, &texture, None);
-        let (verts, indices) = create_hud_quad(-0.75, 0.85, 0.6, 0.22, aspect_correction);
+        let (verts, indices) = create_hud_quad(-0.75, 0.88, 0.6, 0.22, aspect_correction);
         let model = Model::new(&renderer.device, &Mesh { verts, indices })
             .expect("Failed to create debug overlay model");
 
@@ -426,6 +976,8 @@ impl DebugOverlay {
             buffer,
             size,
             visible: true,
+            font,
+            text_scale,
         }
     }
 
@@ -469,18 +1021,42 @@ impl DebugOverlay {
     fn draw_text_line(&mut self, text: &str, start_x: usize, start_y: usize, color: [u8; 4]) {
         let mut cursor_x = start_x;
         for ch in text.chars() {
-            self.draw_char(ch, cursor_x, start_y, color);
-            cursor_x += FONT_WIDTH + 1;
+            self.draw_char(ch, cursor_x, start_y, color, self.text_scale);
+            cursor_x = (cursor_x as f32 + self.font.advance(ch) * self.text_scale).round() as usize;
         }
     }
 
-    fn draw_char(&mut self, ch: char, start_x: usize, start_y: usize, color: [u8; 4]) {
-        let glyph = glyph_bitmap(ch);
-        for (row, bits) in glyph.iter().enumerate() {
-            let y = start_y + (FONT_HEIGHT - 1 - row);
-            for col in 0..FONT_WIDTH {
-                if bits & (1 << (FONT_WIDTH - 1 - col)) != 0 {
-                    self.pixel(start_x + col, y, color);
+    fn draw_char(
+        &mut self,
+        ch: char,
+        start_x: usize,
+        start_y: usize,
+        color: [u8; 4],
+        scale: f32,
+    ) {
+        if let Some(glyph) = self.font.bitmap(ch).cloned() {
+            let w = glyph.width;
+            let h = glyph.height;
+            let scale = scale.max(0.1);
+            for row in 0..h {
+                let y0 = start_y as f32 + row as f32 * scale;
+                let base = row * w;
+                for col in 0..w {
+                    let alpha = glyph.bitmap[base + col];
+                    if alpha > 0 {
+                        let x0 = start_x as f32 + col as f32 * scale;
+                        let w_px = scale.ceil() as i32;
+                        let h_px = scale.ceil() as i32;
+                        for yy in 0..h_px {
+                            for xx in 0..w_px {
+                                self.pixel(
+                                    (x0.round() as i32 + xx) as usize,
+                                    (y0.round() as i32 + yy) as usize,
+                                    color,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -495,99 +1071,130 @@ impl DebugOverlay {
     }
 }
 
-const FONT_WIDTH: usize = 5;
-const FONT_HEIGHT: usize = 7;
-
-fn glyph_bitmap(ch: char) -> [u8; FONT_HEIGHT] {
-    match ch {
-        '0' => [
-            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
-        ],
-        '1' => [
-            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        '2' => [
-            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
-        ],
-        '3' => [
-            0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110,
-        ],
-        '4' => [
-            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
-        ],
-        '5' => [
-            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110,
-        ],
-        '6' => [
-            0b01110, 0b10000, 0b11110, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        '7' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
-        ],
-        '8' => [
-            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
-        ],
-        '9' => [
-            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
-        ],
-        'A' => [
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'C' => [
-            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
-        ],
-        'D' => [
-            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
-        ],
-        'E' => [
-            0b11111, 0b10000, 0b11110, 0b10000, 0b11110, 0b10000, 0b11111,
-        ],
-        'F' => [
-            0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b10000,
-        ],
-        'H' => [
-            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'K' => [
-            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
-        ],
-        'M' => [
-            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
-        ],
-        'N' => [
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'R' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        'U' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'W' => [
-            0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b11011, 0b10001,
-        ],
-        'L' => [
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'T' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'G' => [
-            0b01110, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
-        ],
-        ' ' => [0; FONT_HEIGHT],
-        '.' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100,
-        ],
-        _ => [0; FONT_HEIGHT],
-    }
+fn build_main_menu() -> Vec<MenuEntry> {
+    vec![
+        MenuEntry {
+            title: "Продолжить".to_string(),
+            detail: "Вернуться в игру".to_string(),
+            action: MenuAction::Resume,
+        },
+        MenuEntry {
+            title: "Создать мир".to_string(),
+            detail: "Новый seed и папка сохранения".to_string(),
+            action: MenuAction::CreateWorld,
+        },
+        MenuEntry {
+            title: "Открыть мир".to_string(),
+            detail: "Загрузить существующее сохранение".to_string(),
+            action: MenuAction::OpenWorld,
+        },
+        MenuEntry {
+            title: "Сохранить настройки".to_string(),
+            detail: "Записать config.json".to_string(),
+            action: MenuAction::SaveConfig,
+        },
+        MenuEntry {
+            title: "Настройки".to_string(),
+            detail: "Базовые параметры".to_string(),
+            action: MenuAction::OpenSettings,
+        },
+        MenuEntry {
+            title: "Продвинутые настройки".to_string(),
+            detail: "Оптимизация и дебаг".to_string(),
+            action: MenuAction::OpenAdvanced,
+        },
+        MenuEntry {
+            title: "Выход".to_string(),
+            detail: "Закрыть игру".to_string(),
+            action: MenuAction::Quit,
+        },
+    ]
 }
+
+fn build_settings_menu(cfg: &AppConfig) -> Vec<MenuEntry> {
+    vec![
+        MenuEntry {
+            title: format!("FPS: {}", cfg.graphics.fps_cap),
+            detail: "Цикл: 30 / 60 / 120 / без лимита".to_string(),
+            action: MenuAction::CycleFpsCap,
+        },
+        MenuEntry {
+            title: format!(
+                "VSync: {}",
+                if cfg.graphics.vsync {
+                    "вкл"
+                } else {
+                    "выкл"
+                }
+            ),
+            detail: "Изменить режим представления".to_string(),
+            action: MenuAction::ToggleVsync,
+        },
+        MenuEntry {
+            title: format!("Дальность: {} чанков", cfg.graphics.render_distance_chunks),
+            detail: "Цикл 8 / 16 / 24 / 32 / 48".to_string(),
+            action: MenuAction::CycleRenderDistance,
+        },
+        MenuEntry {
+            title: format!("FOV: {:.0}", cfg.graphics.fov_y_degrees),
+            detail: "Поле зрения камеры".to_string(),
+            action: MenuAction::CycleFov,
+        },
+        MenuEntry {
+            title: "Назад".to_string(),
+            detail: "".to_string(),
+            action: MenuAction::BackToMain,
+        },
+    ]
+}
+
+fn build_advanced_menu(cfg: &AppConfig) -> Vec<MenuEntry> {
+    vec![
+        MenuEntry {
+            title: format!(
+                "Wireframe: {}",
+                if cfg.debug.wireframe {
+                    "вкл"
+                } else {
+                    "выкл"
+                }
+            ),
+            detail: "Отладочный режим линий".to_string(),
+            action: MenuAction::ToggleWireframe,
+        },
+        MenuEntry {
+            title: format!("Jobs in flight: {}", cfg.terrain.jobs_in_flight),
+            detail: "Параллельные задачи генерации".to_string(),
+            action: MenuAction::CycleJobsInFlight,
+        },
+        MenuEntry {
+            title: format!("Dirty per frame: {}", cfg.terrain.dirty_chunks_per_frame),
+            detail: "Ремеш чанков за кадр".to_string(),
+            action: MenuAction::CycleDirtyPerFrame,
+        },
+        MenuEntry {
+            title: format!("Vertex cap: {}", cfg.terrain.min_vertex_cap),
+            detail: "Минимальный буфер вершин".to_string(),
+            action: MenuAction::CycleMinVertexCap,
+        },
+        MenuEntry {
+            title: format!("Index cap: {}", cfg.terrain.min_index_cap),
+            detail: "Минимальный буфер индексов".to_string(),
+            action: MenuAction::CycleMinIndexCap,
+        },
+        MenuEntry {
+            title: format!("Уровень воды: {}", cfg.terrain.land_level),
+            detail: "Высота водной поверхности".to_string(),
+            action: MenuAction::CycleLandLevel,
+        },
+        MenuEntry {
+            title: "Назад".to_string(),
+            detail: "".to_string(),
+            action: MenuAction::BackToMain,
+        },
+    ]
+}
+
 fn build_toolbar_frame(
     selected_index: usize,
     _palette_len: usize,
@@ -607,10 +1214,10 @@ fn build_toolbar_frame(
     let half_h = height / 2.0;
 
     let rect = [
-        [cx - half_w, center_y - half_h],
-        [cx + half_w, center_y - half_h],
-        [cx + half_w, center_y + half_h],
-        [cx - half_w, center_y + half_h],
+        [cx - half_w, center_y + half_h], // top-left (y up)
+        [cx + half_w, center_y + half_h], // top-right
+        [cx + half_w, center_y - half_h], // bottom-right
+        [cx - half_w, center_y - half_h], // bottom-left
     ];
     let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 

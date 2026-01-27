@@ -17,7 +17,8 @@
     ]
   },
   "world": {
-    "seed": 10
+    "seed": 10,
+    "world_name": "default"
   },
   "multiplayer": {
     "ip": "127.0.0.1",
@@ -35,13 +36,6 @@
     "show_fps": true,
     "wireframe": true
   },
-  "terrain": {
-    "jobs_in_flight": 12,
-    "dirty_chunks_per_frame": 32,
-    "min_vertex_cap": 4096,
-    "min_index_cap": 8192,
-    "land_level": 9
-  },
   "player": {
     "mode": "adventure",
     "gravity": 28.0,
@@ -50,5 +44,18 @@
     "radius": 0.35,
     "eye_height": 1.6,
     "max_fall_speed": 48.0
+  },
+  "terrain": {
+    "jobs_in_flight": 12,
+    "dirty_chunks_per_frame": 32,
+    "min_vertex_cap": 4096,
+    "min_index_cap": 8192,
+    "land_level": 9
+  },
+  "ui": {
+    "font_path": "assets/fonts/MatrixSansVideo-Regular.ttf",
+    "font_size": 18.0,
+    "font_weight_px": 0,
+    "text_scale": 1.0
   }
 }

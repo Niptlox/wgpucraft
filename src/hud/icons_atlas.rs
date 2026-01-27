@@ -76,20 +76,20 @@ impl IconType {
 
         let vertices = [
             HUDVertex {
-                position: [center_x - half_width, center_y - half_height],
-                uv: [uv[0], uv[3]], // v_min и v_max меняем местами
+                position: [center_x - half_width, center_y + half_height], // top-left (y up)
+                uv: [uv[0], uv[1]],
             },
             HUDVertex {
-                position: [center_x + half_width, center_y - half_height],
-                uv: [uv[2], uv[3]],
-            },
-            HUDVertex {
-                position: [center_x + half_width, center_y + half_height],
+                position: [center_x + half_width, center_y + half_height], // top-right
                 uv: [uv[2], uv[1]],
             },
             HUDVertex {
-                position: [center_x - half_width, center_y + half_height],
-                uv: [uv[0], uv[1]],
+                position: [center_x + half_width, center_y - half_height], // bottom-right
+                uv: [uv[2], uv[3]],
+            },
+            HUDVertex {
+                position: [center_x - half_width, center_y - half_height], // bottom-left
+                uv: [uv[0], uv[3]],
             },
         ];
 

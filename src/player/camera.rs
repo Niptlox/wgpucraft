@@ -200,6 +200,10 @@ impl Projection {
         self.aspect = width as f32 / height as f32;
     }
 
+    pub fn set_fovy_deg(&mut self, fovy_deg: f32) {
+        self.fovy = cgmath::Deg(fovy_deg).into();
+    }
+
     pub fn calc_matrix(&self) -> Matrix4<f32> {
         OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar)
     }

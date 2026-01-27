@@ -1,0 +1,33 @@
+(
+    id: "menu_root",
+    layout: (Absolute: (rect: (x: Px(0.0), y: Px(0.0), w: Percent(1.0), h: Percent(1.0)))),
+    children: [
+        (
+            id: "menu_title",
+            layout: (Absolute: (rect: (x: Percent(0.0), y: Px(20.0), w: Percent(1.0), h: Px(32.0)))),
+            element: (Label: (text: "WGPUCraft", font_size: 16.0)),
+        ),
+        (
+            id: "menu_buttons",
+            layout: (FlexColumn: (gap: 10.0, padding: 60.0, align: Stretch)),
+            element: (Panel: (color: [18, 22, 30, 220])),
+            children: [
+                (
+                    id: "resume",
+                    layout: (Absolute: (rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(60.0)))),
+                    element: (Button: (text: "Resume", detail: "Back to game", padding: 14.0, min_height: 60.0)),
+                ),
+                (
+                    id: "open_world",
+                    layout: (Absolute: (rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(60.0)))),
+                    element: (Button: (text: "Open World", detail: "Load an existing save", padding: 14.0, min_height: 60.0)),
+                ),
+                (
+                    id: "settings",
+                    layout: (Absolute: (rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(60.0)))),
+                    element: (Button: (text: "Settings", detail: "Video & controls", padding: 14.0, min_height: 60.0)),
+                ),
+            ],
+        ),
+    ],
+)

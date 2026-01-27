@@ -17,6 +17,8 @@ pub struct AppConfig {
     pub player: PlayerConfig,
     /// Настройки производительности генерации и стриминга чанков.
     pub terrain: TerrainTuningConfig,
+    /// UI-настройки: путь к TTF для HUD.
+    pub ui: UiConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +41,19 @@ pub struct GraphicsConfig {
     pub fov_y_degrees: f32,
     /// Цвет неба и тумана (RGB, 0.0..1.0).
     pub sky_color: [f32; 3],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+    /// Путь к TTF-шрифту для интерфейса (относительно корня игры).
+    pub font_path: String,
+    /// Базовый размер шрифта в пикселях при растеризации.
+    pub font_size: f32,
+    /// Утолщение шрифта в пикселях (простая дилатация bitmap).
+    pub font_weight_px: u32,
+    /// Дополнительный масштаб текста при выводе (1.0 — без изменений).
+    pub text_scale: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +127,7 @@ impl Default for AppConfig {
             debug: DebugConfig::default(),
             player: PlayerConfig::default(),
             terrain: TerrainTuningConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 }
@@ -135,6 +151,17 @@ impl Default for GraphicsConfig {
             render_distance_chunks: 32,
             fov_y_degrees: 60.0,
             sky_color: [0.60, 0.75, 0.90],
+        }
+    }
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            font_path: "assets/fonts/MatrixSans-Regular.ttf".to_string(),
+            font_size: 16.0,
+            font_weight_px: 0,
+            text_scale: 1.0,
         }
     }
 }

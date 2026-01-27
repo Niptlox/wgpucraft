@@ -196,6 +196,12 @@ impl<'a> Renderer<'a> {
         consts.update(&self.queue, vals, 0)
     }
 
+    /// Переконфигурировать режим представления (vsync/novsync) без пересоздания GPU-ресурсов.
+    pub fn reconfigure_present_mode(&mut self, present_mode: wgpu::PresentMode) {
+        self.config.present_mode = present_mode;
+        self.surface.configure(&self.device, &self.config);
+    }
+
     pub fn render(
         &mut self,
         terrain: &TerrainGen,
