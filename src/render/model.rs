@@ -47,11 +47,7 @@ pub struct DynamicModel<V: Vertex> {
 }
 
 impl<V: Vertex> DynamicModel<V> {
-    pub fn new(
-        device: &wgpu::Device,
-        vertex_capacity: usize,
-        index_capacity: usize,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, vertex_capacity: usize, index_capacity: usize) -> Self {
         let v_usage = wgpu::BufferUsages::VERTEX;
         let i_usage = wgpu::BufferUsages::INDEX;
         Self {

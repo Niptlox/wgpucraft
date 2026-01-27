@@ -40,24 +40,43 @@ impl MaterialType {
         let tile_size = atlas_size / 16.0;
         match self {
             MaterialType::GRASS => match quad_side {
-                Direction::TOP => atlas_pos_to_coordinates([0.0, 0.0], texture_corner, tile_size, atlas_size),
-                Direction::BOTTOM => atlas_pos_to_coordinates([2.0, 0.0], texture_corner, tile_size, atlas_size),
-                Direction::RIGHT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size),
-                Direction::LEFT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size),
-                Direction::FRONT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size),
-                Direction::BACK => atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size),
+                Direction::TOP => {
+                    atlas_pos_to_coordinates([0.0, 0.0], texture_corner, tile_size, atlas_size)
+                }
+                Direction::BOTTOM => {
+                    atlas_pos_to_coordinates([2.0, 0.0], texture_corner, tile_size, atlas_size)
+                }
+                Direction::RIGHT => {
+                    atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size)
+                }
+                Direction::LEFT => {
+                    atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size)
+                }
+                Direction::FRONT => {
+                    atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size)
+                }
+                Direction::BACK => {
+                    atlas_pos_to_coordinates([3.0, 0.0], texture_corner, tile_size, atlas_size)
+                }
             },
-            MaterialType::DIRT => atlas_pos_to_coordinates([2.0, 0.0], texture_corner, tile_size, atlas_size),
-            MaterialType::ROCK => atlas_pos_to_coordinates([0.0, 1.0], texture_corner, tile_size, atlas_size),
-            MaterialType::WATER => atlas_pos_to_coordinates([13.0, 0.0], texture_corner, tile_size, atlas_size),
+            MaterialType::DIRT => {
+                atlas_pos_to_coordinates([2.0, 0.0], texture_corner, tile_size, atlas_size)
+            }
+            MaterialType::ROCK => {
+                atlas_pos_to_coordinates([0.0, 1.0], texture_corner, tile_size, atlas_size)
+            }
+            MaterialType::WATER => {
+                atlas_pos_to_coordinates([13.0, 0.0], texture_corner, tile_size, atlas_size)
+            }
             MaterialType::AIR => [0.0, 0.0],
-            MaterialType::DEBUG => atlas_pos_to_coordinates([5.0, 0.0], texture_corner, tile_size, atlas_size),
-            // match quad_side {
-            //     Direction::TOP | Direction::BOTTOM => {
-            //         atlas_pos_to_coordinates([5.0, 1.0], texture_corner, tile_size, atlas_size)
-            //     }
-            //     _ => atlas_pos_to_coordinates([4.0, 1.0], texture_corner, tile_size, atlas_size),
-            // },
+            MaterialType::DEBUG => {
+                atlas_pos_to_coordinates([5.0, 0.0], texture_corner, tile_size, atlas_size)
+            } // match quad_side {
+              //     Direction::TOP | Direction::BOTTOM => {
+              //         atlas_pos_to_coordinates([5.0, 1.0], texture_corner, tile_size, atlas_size)
+              //     }
+              //     _ => atlas_pos_to_coordinates([4.0, 1.0], texture_corner, tile_size, atlas_size),
+              // },
         }
     }
 }

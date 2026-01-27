@@ -46,7 +46,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         0.0,
         1.0,
     );
-    let fog_color = vec3<f32>(0.65, 0.78, 0.88);
+    // Цвет тумана совпадает с цветом неба/clear (см. renderer), чтобы шов не выделялся.
+    let fog_color = vec3<f32>(0.10, 0.20, 0.30);
     return vec4<f32>(mix(base_color.rgb, fog_color, fog_factor), base_color.a);
 }
  

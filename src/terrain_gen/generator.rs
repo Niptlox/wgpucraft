@@ -1,38 +1,32 @@
 use std::{
-    collections::VecDeque,
     collections::HashSet,
+    collections::VecDeque,
     sync::{Arc, RwLock},
+    thread,
 };
 
+use crate::core::config::AppConfig;
 use crate::render::pipelines::GlobalsLayouts;
 use crate::terrain_gen::chunk::{CHUNK_AREA, Chunk, ChunkManager};
 use crate::{
     render::{
+        Vertex,
         atlas::{Atlas, MaterialType},
-        model::{DynamicModel, Model},
         mesh::Mesh,
+        model::{DynamicModel, Model},
         pipelines::terrain::{BlockVertex, create_terrain_pipeline},
         renderer::{Draw, Renderer},
-        Vertex,
     },
     terrain_gen::biomes::PRAIRIE_PARAMS,
 };
 
-use cgmath::{EuclideanSpace, Point3, Vector3};
 use bytemuck::cast_slice;
-use std::{
-    path::PathBuf,
-    sync::mpsc::{self, Receiver, Sender},
-    thread,
-};
+use cgmath::{EuclideanSpace, Point3, Vector3};
+use crossbeam_channel::{Receiver, Sender};
+use std::path::PathBuf;
 #[cfg(feature = "tracy")]
 use tracy_client::span;
 use wgpu::Queue;
-
-pub const LAND_LEVEL: usize = 9;
-const MAX_JOBS_IN_FLIGHT: usize = 8;
-const MIN_VERTEX_CAP: usize = 4 * 1024;
-const MIN_INDEX_CAP: usize = 8 * 1024;
 
 use super::noise::NoiseGenerator;
 
@@ -73,6 +67,11 @@ pub struct TerrainGen {
     save_tx: Sender<(PathBuf, Vec<u8>)>,
     highlight_model: Option<Model<OutlineVertex>>,
     highlight_pos: Option<Vector3<i32>>,
+    max_jobs_in_flight: usize,
+    max_dirty_per_frame: usize,
+    min_vertex_cap: usize,
+    min_index_cap: usize,
+    land_level: usize,
 }
 
 enum JobKind {
@@ -85,15 +84,16 @@ struct ChunkJob {
     chunk: Arc<RwLock<Chunk>>,
     kind: JobKind,
     save_dir: PathBuf,
+    land_level: usize,
 }
 
 impl TerrainGen {
-    pub fn new(
-        renderer: &Renderer,
-        render_distance_chunks: usize,
-        seed: u32,
-        world_name: &str,
-    ) -> Self {
+    pub fn new(renderer: &Renderer, config: &AppConfig) -> Self {
+        let render_distance_chunks = config.graphics.render_distance_chunks;
+        let seed = config.world.seed;
+        let world_name = &config.world.world_name;
+        let tuning = &config.terrain;
+
         let save_dir = PathBuf::from(format!("saves/{world_name}"));
         let _ = std::fs::create_dir_all(&save_dir);
         let global_layouts = GlobalsLayouts::new(&renderer.device);
@@ -110,8 +110,8 @@ impl TerrainGen {
         for x in 0..chunk_capacity {
             chunks.add_chunk(Chunk::new([0, 0, 0]));
             // Начинаем с небольшого GPU-буфера и при необходимости растим его.
-            let vertex_capacity = MIN_VERTEX_CAP; // увеличится, если чанку нужно больше
-            let index_capacity = MIN_INDEX_CAP;
+            let vertex_capacity = tuning.min_vertex_cap; // увеличится, если чанку нужно больше
+            let index_capacity = tuning.min_index_cap;
             let mut chunk_model =
                 DynamicModel::new(&renderer.device, vertex_capacity, index_capacity);
 
@@ -128,82 +128,85 @@ impl TerrainGen {
             .device
             .create_shader_module(wgpu::include_wgsl!("../../assets/shaders/shader.wgsl"));
 
-        let world_pipeline =
-            create_terrain_pipeline(&renderer.device, &global_layouts, shader.clone(), &renderer.config);
+        let world_pipeline = create_terrain_pipeline(
+            &renderer.device,
+            &global_layouts,
+            shader.clone(),
+            &renderer.config,
+        );
         let highlight_shader = create_highlight_shader(&renderer.device);
-        let highlight_pipeline =
-            create_highlight_pipeline(&renderer.device, &global_layouts, &highlight_shader, &renderer.config);
+        let highlight_pipeline = create_highlight_pipeline(
+            &renderer.device,
+            &global_layouts,
+            &highlight_shader,
+            &renderer.config,
+        );
 
         let center_offset = Vector3::new(0, 0, 0);
         let chunks_origin = center_offset
             - Vector3::new(chunks_view_size as i32 / 2, 0, chunks_view_size as i32 / 2);
 
-        let (gen_job_tx, gen_job_rx) = mpsc::channel::<ChunkJob>();
-        let (remesh_job_tx, remesh_job_rx) = mpsc::channel::<ChunkJob>();
-        let (ready_tx, ready_rx) = mpsc::channel::<usize>();
-        let (save_tx, save_rx) = mpsc::channel::<(PathBuf, Vec<u8>)>();
+        let (gen_job_tx, gen_job_rx) = crossbeam_channel::unbounded::<ChunkJob>();
+        let (remesh_job_tx, remesh_job_rx) = crossbeam_channel::unbounded::<ChunkJob>();
+        let (ready_tx, ready_rx) = crossbeam_channel::unbounded::<usize>();
+        let (save_tx, save_rx) = crossbeam_channel::unbounded::<(PathBuf, Vec<u8>)>();
         let noise_for_worker = noise_gen.clone();
+        let worker_count = tuning.jobs_in_flight.max(1);
 
-        std::thread::spawn(move || {
-            use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+        for _ in 0..worker_count {
+            let remesh_job_rx = remesh_job_rx.clone();
+            let gen_job_rx = gen_job_rx.clone();
+            let ready_tx = ready_tx.clone();
+            let noise_for_worker = noise_for_worker.clone();
 
-            let process_job = |job: ChunkJob| {
-                match job.kind {
-                    JobKind::Generate { offset } => {
-                        if let Ok(mut chunk) = job.chunk.write() {
-                            let path = job.save_dir.join(format!(
-                                "chunk_{}_{}_{}.bin",
-                                offset.x, offset.y, offset.z
-                            ));
-                            let loaded =
-                                path.exists() && chunk.load_from(&path, offset.into()).is_ok();
-                            if !loaded {
-                                chunk.update_blocks(offset.into(), &noise_for_worker, &PRAIRIE_PARAMS);
+            std::thread::spawn(move || {
+                let process_job = |job: ChunkJob| {
+                    match job.kind {
+                        JobKind::Generate { offset } => {
+                            if let Ok(mut chunk) = job.chunk.write() {
+                                let path = job.save_dir.join(format!(
+                                    "chunk_{}_{}_{}.bin",
+                                    offset.x, offset.y, offset.z
+                                ));
+                                let loaded =
+                                    path.exists() && chunk.load_from(&path, offset.into()).is_ok();
+                                if !loaded {
+                                    chunk.update_blocks(
+                                        offset.into(),
+                                        &noise_for_worker,
+                                        &PRAIRIE_PARAMS,
+                                        job.land_level,
+                                    );
+                                }
+                                chunk.update_mesh(PRAIRIE_PARAMS, None);
+                                chunk.dirty = false;
                             }
-                            chunk.update_mesh(PRAIRIE_PARAMS, None);
-                            chunk.dirty = false;
+                        }
+                        JobKind::Remesh => {
+                            if let Ok(mut chunk) = job.chunk.write() {
+                                let y_range = chunk.dirty_y_range();
+                                chunk.update_mesh(PRAIRIE_PARAMS, y_range);
+                                chunk.dirty = false;
+                            }
                         }
                     }
-                    JobKind::Remesh => {
-                        if let Ok(mut chunk) = job.chunk.write() {
-                            let y_range = chunk.dirty_y_range();
-                            chunk.update_mesh(PRAIRIE_PARAMS, y_range);
-                            chunk.dirty = false;
-                        }
+                    let _ = ready_tx.send(job.chunk_index);
+                };
+
+                loop {
+                    crossbeam_channel::select! {
+                        recv(remesh_job_rx) -> msg => match msg {
+                            Ok(job) => process_job(job),
+                            Err(_) => break,
+                        },
+                        recv(gen_job_rx) -> msg => match msg {
+                            Ok(job) => process_job(job),
+                            Err(_) => break,
+                        },
                     }
                 }
-                let _ = ready_tx.send(job.chunk_index);
-            };
-
-            let mut remesh_alive = true;
-            let mut gen_alive = true;
-
-            while remesh_alive || gen_alive {
-                match remesh_job_rx.try_recv() {
-                    Ok(job) => {
-                        process_job(job);
-                        continue;
-                    }
-                    Err(TryRecvError::Empty) => {}
-                    Err(TryRecvError::Disconnected) => remesh_alive = false,
-                }
-
-                match remesh_job_rx.recv_timeout(std::time::Duration::from_millis(5)) {
-                    Ok(job) => {
-                        process_job(job);
-                        continue;
-                    }
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => remesh_alive = false,
-                }
-
-                match gen_job_rx.recv_timeout(std::time::Duration::from_millis(25)) {
-                    Ok(job) => process_job(job),
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => gen_alive = false,
-                }
-            }
-        });
+            });
+        }
 
         thread::spawn(move || {
             while let Ok((path, materials)) = save_rx.recv() {
@@ -235,6 +238,11 @@ impl TerrainGen {
             save_tx,
             highlight_model: None,
             highlight_pos: None,
+            max_jobs_in_flight: tuning.jobs_in_flight,
+            max_dirty_per_frame: tuning.dirty_chunks_per_frame,
+            min_vertex_cap: tuning.min_vertex_cap,
+            min_index_cap: tuning.min_index_cap,
+            land_level: tuning.land_level,
         };
 
         println!("about to load first chunks");
@@ -243,11 +251,7 @@ impl TerrainGen {
         world
     }
 
-    pub fn update_highlight_model(
-        &mut self,
-        device: &wgpu::Device,
-        block: Option<Vector3<i32>>,
-    ) {
+    pub fn update_highlight_model(&mut self, device: &wgpu::Device, block: Option<Vector3<i32>>) {
         if self.highlight_pos == block {
             return;
         }
@@ -265,14 +269,30 @@ impl TerrainGen {
                 pos.z as f32 + 1.0 + inflate,
             );
             let verts = [
-                OutlineVertex { pos: [base.x, base.y, base.z] }, // 0
-                OutlineVertex { pos: [max.x, base.y, base.z] },  // 1
-                OutlineVertex { pos: [max.x, max.y, base.z] },   // 2
-                OutlineVertex { pos: [base.x, max.y, base.z] },  // 3
-                OutlineVertex { pos: [base.x, base.y, max.z] },  // 4
-                OutlineVertex { pos: [max.x, base.y, max.z] },   // 5
-                OutlineVertex { pos: [max.x, max.y, max.z] },    // 6
-                OutlineVertex { pos: [base.x, max.y, max.z] },   // 7
+                OutlineVertex {
+                    pos: [base.x, base.y, base.z],
+                }, // 0
+                OutlineVertex {
+                    pos: [max.x, base.y, base.z],
+                }, // 1
+                OutlineVertex {
+                    pos: [max.x, max.y, base.z],
+                }, // 2
+                OutlineVertex {
+                    pos: [base.x, max.y, base.z],
+                }, // 3
+                OutlineVertex {
+                    pos: [base.x, base.y, max.z],
+                }, // 4
+                OutlineVertex {
+                    pos: [max.x, base.y, max.z],
+                }, // 5
+                OutlineVertex {
+                    pos: [max.x, max.y, max.z],
+                }, // 6
+                OutlineVertex {
+                    pos: [base.x, max.y, max.z],
+                }, // 7
             ];
             let mesh = Mesh {
                 verts: verts.into(),
@@ -289,12 +309,7 @@ impl TerrainGen {
     }
 
     // вызывается каждый кадр
-    pub fn update(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        player_position: &Point3<f32>,
-    ) {
+    pub fn update(&mut self, device: &wgpu::Device, queue: &Queue, player_position: &Point3<f32>) {
         #[cfg(feature = "tracy")]
         let _span = span!("update_world"); // <- Отметка начала блока
 
@@ -332,7 +347,7 @@ impl TerrainGen {
         }
 
         self.process_ready_chunks(device, queue);
-        self.process_dirty_chunks(device, queue, 2);
+        self.process_dirty_chunks(device, queue);
 
         if moved_to_new_chunk || self.has_missing_chunks() {
             self.load_empty_chunks(new_center_offset);
@@ -350,43 +365,58 @@ impl TerrainGen {
                 .any(|entry| entry.map_or(false, |idx| idx == chunk_index));
 
             if let Some(chunk_model) = self.chunk_models.get(chunk_index) {
-                let (_layout_changed, rebuilt_layers, _spans, mesh, offset, layer_data, total_indices) =
-                    if let Some(chunk_arc) = self.chunks.get_chunk(chunk_index) {
-                        let mut chunk = chunk_arc.write().unwrap();
-                        let layout_changed = chunk.layout_changed();
-                        let rebuilt_layers = chunk.take_rebuilt_layers();
-                        let spans = chunk.layer_spans().to_vec();
-                        let offset = chunk.offset;
-                        let mesh = if layout_changed {
-                            Some(chunk.mesh.clone())
-                        } else {
-                            None
-                        };
-                        let total_indices: u32 = spans.iter().map(|s| s.i_len).sum();
+                let (
+                    _layout_changed,
+                    rebuilt_layers,
+                    _spans,
+                    mesh,
+                    offset,
+                    layer_data,
+                    total_indices,
+                ) = if let Some(chunk_arc) = self.chunks.get_chunk(chunk_index) {
+                    let mut chunk = chunk_arc.write().unwrap();
+                    let layout_changed = chunk.layout_changed();
+                    let rebuilt_layers = chunk.take_rebuilt_layers();
+                    let spans = chunk.layer_spans().to_vec();
+                    let offset = chunk.offset;
+                    let mesh = if layout_changed {
+                        Some(chunk.mesh.clone())
+                    } else {
+                        None
+                    };
+                    let total_indices: u32 = spans.iter().map(|s| s.i_len).sum();
 
-                        let mut layer_data = Vec::new();
-                        if !layout_changed {
-                            for &ly in &rebuilt_layers {
-                                if let Some(span) = spans.get(ly).copied() {
-                                    if let Some((verts, inds)) = chunk.layer_mesh(ly) {
-                                        layer_data.push((span, verts.to_vec(), inds.to_vec()));
-                                    }
+                    let mut layer_data = Vec::new();
+                    if !layout_changed {
+                        for &ly in &rebuilt_layers {
+                            if let Some(span) = spans.get(ly).copied() {
+                                if let Some((verts, inds)) = chunk.layer_mesh(ly) {
+                                    layer_data.push((span, verts.to_vec(), inds.to_vec()));
                                 }
                             }
                         }
+                    }
 
-                        (
-                            layout_changed,
-                            rebuilt_layers,
-                            spans,
-                            mesh,
-                            offset,
-                            layer_data,
-                            total_indices,
-                        )
-                    } else {
-                        (false, Vec::new(), Vec::new(), None, [0, 0, 0], Vec::new(), 0)
-                    };
+                    (
+                        layout_changed,
+                        rebuilt_layers,
+                        spans,
+                        mesh,
+                        offset,
+                        layer_data,
+                        total_indices,
+                    )
+                } else {
+                    (
+                        false,
+                        Vec::new(),
+                        Vec::new(),
+                        None,
+                        [0, 0, 0],
+                        Vec::new(),
+                        0,
+                    )
+                };
 
                 if let Some(mesh) = mesh {
                     let mut chunk_model = chunk_model.write().unwrap();
@@ -402,9 +432,10 @@ impl TerrainGen {
                             let v_buffer = model.vbuf();
                             let i_buffer = model.ibuf();
                             for (span, verts, inds) in layer_data {
-                                let v_offset = span.v_start as u64
-                                    * std::mem::size_of::<BlockVertex>() as u64;
-                                let i_offset = span.i_start as u64 * std::mem::size_of::<u32>() as u64;
+                                let v_offset =
+                                    span.v_start as u64 * std::mem::size_of::<BlockVertex>() as u64;
+                                let i_offset =
+                                    span.i_start as u64 * std::mem::size_of::<u32>() as u64;
                                 queue.write_buffer(v_buffer, v_offset, cast_slice(&verts));
                                 let global_inds: Vec<u32> =
                                     inds.iter().map(|i| i + span.v_start).collect();
@@ -425,14 +456,16 @@ impl TerrainGen {
         }
     }
 
-    fn process_dirty_chunks(&mut self, _device: &wgpu::Device, _queue: &Queue, max_per_frame: usize) {
+    fn process_dirty_chunks(&mut self, _device: &wgpu::Device, _queue: &Queue) {
         let mut scheduled = 0;
         let queue_len = self.dirty_queue.len();
         for _ in 0..queue_len {
-            if scheduled >= max_per_frame {
+            if scheduled >= self.max_dirty_per_frame {
                 break;
             }
-            let Some(idx) = self.dirty_queue.pop_front() else { break };
+            let Some(idx) = self.dirty_queue.pop_front() else {
+                break;
+            };
 
             if self.pending_jobs.contains(&idx) {
                 // Уже в работе — оставим на очереди, но не зациклливаемся в этом кадре.
@@ -452,7 +485,7 @@ impl TerrainGen {
                 }
             }
 
-            if self.pending_jobs.len() >= MAX_JOBS_IN_FLIGHT {
+            if self.pending_jobs.len() >= self.max_jobs_in_flight {
                 // Нет свободного слота — вернём задачу в очередь.
                 self.dirty_queue.push_front(idx);
                 break;
@@ -463,6 +496,7 @@ impl TerrainGen {
                 chunk: chunk_arc,
                 kind: JobKind::Remesh,
                 save_dir: self.save_dir.clone(),
+                land_level: self.land_level,
             };
 
             self.pending_jobs.insert(idx);
@@ -482,12 +516,7 @@ impl TerrainGen {
 
     /// Синхронный быстрый ремеш сразу после действия игрока — используем
     /// узкий y-диапазон, который накоплен в dirty_y_range.
-    pub fn remesh_chunks_now(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        indices: &[usize],
-    ) {
+    pub fn remesh_chunks_now(&mut self, device: &wgpu::Device, queue: &Queue, indices: &[usize]) {
         for &idx in indices {
             if let Some(chunk_arc) = self.chunks.get_chunk(idx) {
                 // Если уже в фоне — не трогаем, иначе можем обновить сразу.
@@ -541,7 +570,7 @@ impl TerrainGen {
         });
 
         for (world_index, chunk_offset) in missing.into_iter() {
-            if self.pending_jobs.len() >= MAX_JOBS_IN_FLIGHT {
+            if self.pending_jobs.len() >= self.max_jobs_in_flight {
                 break;
             }
             if let Some(new_index) = self.free_chunk_indices.write().unwrap().pop_front() {
@@ -555,6 +584,7 @@ impl TerrainGen {
                             offset: chunk_offset,
                         },
                         save_dir: self.save_dir.clone(),
+                        land_level: self.land_level,
                     };
                     let _ = self.gen_job_tx.send(job);
                 }
@@ -599,7 +629,7 @@ impl TerrainGen {
 
         if let Some(chunk_model) = self.chunk_models.get(chunk_index) {
             if let Ok(mut model) = chunk_model.write() {
-                model.shrink_to(device, MIN_VERTEX_CAP, MIN_INDEX_CAP);
+                model.shrink_to(device, self.min_vertex_cap, self.min_index_cap);
             }
         }
         self.chunks.remove_chunk_from_map(chunk_index);
@@ -633,11 +663,7 @@ impl TerrainGen {
             );
     }
 
-    fn get_chunk_offset_from_origin(
-        &self,
-        origin: Vector3<i32>,
-        i: usize,
-    ) -> Vector3<i32> {
+    fn get_chunk_offset_from_origin(&self, origin: Vector3<i32>, i: usize) -> Vector3<i32> {
         origin
             + Vector3::new(
                 i as i32 % self.chunks_view_size as i32,

@@ -140,9 +140,7 @@ pub struct Block {
 
 impl Block {
     pub fn new(material_type: MaterialType) -> Self {
-        Self {
-            material_type,
-        }
+        Self { material_type }
     }
 
     pub fn is_transparent(&self) -> bool {

@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub multiplayer: MultiplayerConfig,
     pub debug: DebugConfig,
     pub player: PlayerConfig,
+    /// Настройки производительности генерации и стриминга чанков.
+    pub terrain: TerrainTuningConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +85,21 @@ pub struct PlayerConfig {
     pub max_fall_speed: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerrainTuningConfig {
+    /// Сколько задач генерации/ремеша можно держать в полёте одновременно.
+    pub jobs_in_flight: usize,
+    /// Сколько грязных чанков отправлять на ремеш за кадр.
+    pub dirty_chunks_per_frame: usize,
+    /// Минимальный стартовый размер буфера вершин для чанка.
+    pub min_vertex_cap: usize,
+    /// Минимальный стартовый размер буфера индексов для чанка.
+    pub min_index_cap: usize,
+    /// Уровень воды (y), ниже которого генерируется вода при пустоте.
+    pub land_level: usize,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -92,6 +109,7 @@ impl Default for AppConfig {
             multiplayer: MultiplayerConfig::default(),
             debug: DebugConfig::default(),
             player: PlayerConfig::default(),
+            terrain: TerrainTuningConfig::default(),
         }
     }
 }
@@ -159,6 +177,18 @@ impl Default for PlayerConfig {
             radius: 0.35,
             eye_height: 1.6,
             max_fall_speed: 48.0,
+        }
+    }
+}
+
+impl Default for TerrainTuningConfig {
+    fn default() -> Self {
+        Self {
+            jobs_in_flight: 8,
+            dirty_chunks_per_frame: 2,
+            min_vertex_cap: 4 * 1024,
+            min_index_cap: 8 * 1024,
+            land_level: 9,
         }
     }
 }

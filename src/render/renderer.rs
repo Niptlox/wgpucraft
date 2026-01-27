@@ -8,8 +8,8 @@ use super::{
     pipelines::{GlobalModel, GlobalsLayouts},
     texture::{self, Texture},
 };
-use log::info;
 use crate::{hud::HUD, terrain_gen::generator::TerrainGen};
+use log::info;
 pub trait Draw {
     fn draw<'a>(
         &'a self,
@@ -168,8 +168,7 @@ impl<'a> Renderer<'a> {
         self.layouts.global.bind(&self.device, global_model)
     }
 
-    pub fn update(&mut self) {
-    }
+    pub fn update(&mut self) {}
 
     pub fn create_consts<T: Copy + bytemuck::Pod>(&mut self, vals: &[T]) -> Consts<T> {
         let mut consts = Consts::new(&self.device, vals.len());

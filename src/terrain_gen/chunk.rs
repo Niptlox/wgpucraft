@@ -4,15 +4,15 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use anyhow::{Result, bail};
 use cgmath::Vector3;
 use std::collections::HashMap;
-use anyhow::{bail, Result};
 #[cfg(feature = "tracy")]
 use tracy_client::span;
 
 use crate::render::{atlas::MaterialType, mesh::Mesh, pipelines::terrain::BlockVertex};
 
-use super::{biomes::BiomeParameters, block::Block, generator::LAND_LEVEL, noise::NoiseGenerator};
+use super::{biomes::BiomeParameters, block::Block, noise::NoiseGenerator};
 
 pub const CHUNK_Y_SIZE: usize = 512;
 pub const CHUNK_AREA: usize = 16;
@@ -110,6 +110,7 @@ impl Chunk {
         offset: [i32; 3],
         noise_generator: &NoiseGenerator,
         biome: &BiomeParameters,
+        land_level: usize,
     ) {
         #[cfg(feature = "tracy")]
         let _span = span!("generate chunk: full scope"); // Замер генерации чанка
@@ -147,7 +148,7 @@ impl Chunk {
                     let new_height = (biome.base_height + height_variation).round() as usize;
 
                     let block_type = if y > new_height {
-                        if y <= LAND_LEVEL {
+                        if y <= land_level {
                             MaterialType::WATER
                         } else {
                             MaterialType::AIR
@@ -217,8 +218,7 @@ impl Chunk {
                                 local_pos.y,
                                 local_pos.z + (self.offset[2] * CHUNK_AREA as i32),
                             ];
-                            let quad =
-                                crate::terrain_gen::block::Quad::new(block, side, world_pos);
+                            let quad = crate::terrain_gen::block::Quad::new(block, side, world_pos);
                             layer.verts.extend_from_slice(&quad.vertices);
                             block_indices.extend_from_slice(&quad.get_indices(quad_counter));
                             quad_counter += 1;
@@ -341,7 +341,11 @@ impl ChunkManager {
         self.index_offset.push(chunk.offset);
         self.chunks.push(Arc::new(RwLock::new(chunk)));
         // offset_index_map будет заполнен при update_chunk_offset
-        debug_assert!(self.offset_index_map.get(&[i32::MIN, i32::MIN, i32::MIN]).is_none());
+        debug_assert!(
+            self.offset_index_map
+                .get(&[i32::MIN, i32::MIN, i32::MIN])
+                .is_none()
+        );
     }
 
     pub fn get_chunk(&self, index: usize) -> Option<Arc<RwLock<Chunk>>> {

@@ -90,12 +90,7 @@ impl<'a> State<'a> {
         let mut player = Player::new(camera, config.input.move_speed, &config);
         player.set_mode(config.player.mode.clone(), &config);
 
-        let terrain = TerrainGen::new(
-            &renderer,
-            config.graphics.render_distance_chunks,
-            config.world.seed,
-            &config.world.world_name,
-        );
+        let terrain = TerrainGen::new(&renderer, &config);
 
         Self {
             window,
@@ -140,8 +135,10 @@ impl<'a> State<'a> {
                     match (button, state) {
                         // ЛКМ — ломаем блок (ставим воздух)
                         (MouseButton::Left, ElementState::Pressed) => {
-                            let ray =
-                                Ray::from_camera(&self.player.camera, self.player.max_interact_range());
+                            let ray = Ray::from_camera(
+                                &self.player.camera,
+                                self.player.max_interact_range(),
+                            );
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
@@ -160,8 +157,10 @@ impl<'a> State<'a> {
                             }
                         }
                         (MouseButton::Right, ElementState::Pressed) => {
-                            let ray =
-                                Ray::from_camera(&self.player.camera, self.player.max_interact_range());
+                            let ray = Ray::from_camera(
+                                &self.player.camera,
+                                self.player.max_interact_range(),
+                            );
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
@@ -187,8 +186,10 @@ impl<'a> State<'a> {
                             }
                         }
                         (MouseButton::Middle, ElementState::Pressed) => {
-                            let ray =
-                                Ray::from_camera(&self.player.camera, self.player.max_interact_range());
+                            let ray = Ray::from_camera(
+                                &self.player.camera,
+                                self.player.max_interact_range(),
+                            );
                             let ray_hit = ray.cast(&self.terrain.chunks);
 
                             if let Some(hit) = ray_hit {
@@ -362,26 +363,25 @@ impl<'a> State<'a> {
         self.renderer.update();
 
         let cam_deps = &self.player.camera.dependants;
-        let max_view_distance = (self.config.graphics.render_distance_chunks.max(1) * CHUNK_AREA)
-            as f32;
-        // Приближаем туман: начало примерно с 35% дальности, полная плотность к ~65%.
-        let fog_start = max_view_distance * 0.35;
-        let fog_end = max_view_distance * 0.65;
+        let max_view_distance =
+            (self.config.graphics.render_distance_chunks.max(1) * CHUNK_AREA) as f32;
+        // Ближе туман: начало ~25% дальности, полная плотность к ~55%.
+        let fog_start = max_view_distance * 0.25;
+        let fog_end = max_view_distance * 0.55;
 
-        self.renderer
-            .update_consts(
-                &mut self.data.globals,
-                &[Globals::new(
-                    cam_deps.view_proj,
-                    [
-                        self.player.camera.position.x,
-                        self.player.camera.position.y,
-                        self.player.camera.position.z,
-                    ],
-                    fog_start,
-                    fog_end,
-                )],
-            );
+        self.renderer.update_consts(
+            &mut self.data.globals,
+            &[Globals::new(
+                cam_deps.view_proj,
+                [
+                    self.player.camera.position.x,
+                    self.player.camera.position.y,
+                    self.player.camera.position.z,
+                ],
+                fog_start,
+                fog_end,
+            )],
+        );
 
         self.update_block_highlight();
     }

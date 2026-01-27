@@ -375,21 +375,20 @@ fn build_toolbar_model(
         let height = if is_selected { 0.14 } else { 0.12 };
         let center_x = base_x + i as f32 * step;
         let center_y = -0.85;
-        let (quad_verts, quad_indices) =
-            icon.get_vertex_quad(center_x, center_y, width, height, aspect_correction, icon_atlas_size);
+        let (quad_verts, quad_indices) = icon.get_vertex_quad(
+            center_x,
+            center_y,
+            width,
+            height,
+            aspect_correction,
+            icon_atlas_size,
+        );
         let base_index = verts.len() as u32;
         verts.extend_from_slice(&quad_verts);
         indices.extend(quad_indices.iter().map(|idx| idx + base_index));
     }
 
-    Model::new(
-        device,
-        &Mesh {
-            verts,
-            indices,
-        },
-    )
-    .expect("Failed to build toolbar model")
+    Model::new(device, &Mesh { verts, indices }).expect("Failed to build toolbar model")
 }
 
 struct DebugOverlay {
@@ -613,12 +612,7 @@ fn build_toolbar_frame(
         [cx + half_w, center_y + half_h],
         [cx - half_w, center_y + half_h],
     ];
-    let uvs = [
-        [0.0, 0.0],
-        [1.0, 0.0],
-        [1.0, 1.0],
-        [0.0, 1.0],
-    ];
+    let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
     for i in 0..4 {
         verts.push(HUDVertex {

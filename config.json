@@ -8,7 +8,7 @@
   "graphics": {
     "fps_cap": 60,
     "vsync": true,
-    "render_distance_chunks": 128,
+    "render_distance_chunks": 64,
     "fov_y_degrees": 60.0
   },
   "world": {
@@ -28,7 +28,14 @@
   "debug": {
     "show_overlay": true,
     "show_fps": true,
-    "wireframe": false
+    "wireframe": true
+  },
+  "terrain": {
+    "jobs_in_flight": 12,
+    "dirty_chunks_per_frame": 32,
+    "min_vertex_cap": 4096,
+    "min_index_cap": 8192,
+    "land_level": 9
   },
   "player": {
     "mode": "adventure",
