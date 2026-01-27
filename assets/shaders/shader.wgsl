@@ -4,7 +4,8 @@ struct CameraUniform {
     camera_pos: vec4<f32>,
     fog_start: f32,
     fog_end: f32,
-    _pad: vec2<f32>,
+    // x,y храним sky.r sky.g для совпадения цвета тумана и неба
+    sky_rg: vec2<f32>,
 };
 @group(1) @binding(0) // 1.
 var<uniform> camera: CameraUniform;
@@ -47,7 +48,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         1.0,
     );
     // Цвет тумана совпадает с цветом неба/clear (см. renderer), чтобы шов не выделялся.
-    let fog_color = vec3<f32>(0.10, 0.20, 0.30);
+    let fog_color = vec3<f32>(camera.sky_rg.x, camera.sky_rg.y, camera.camera_pos.w);
     return vec4<f32>(mix(base_color.rgb, fog_color, fog_factor), base_color.a);
 }
  

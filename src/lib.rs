@@ -53,7 +53,7 @@ pub struct State<'a> {
 impl<'a> State<'a> {
     pub fn new(window: &'a Window, config: AppConfig) -> Self {
         let frame_target = config.target_frame_time();
-        let mut renderer = Renderer::new(&window, config.present_mode());
+        let mut renderer = Renderer::new(&window, config.present_mode(), config.graphics.sky_color);
 
         let data = GlobalModel {
             globals: renderer.create_consts(&[Globals::default()]),
@@ -365,9 +365,10 @@ impl<'a> State<'a> {
         let cam_deps = &self.player.camera.dependants;
         let max_view_distance =
             (self.config.graphics.render_distance_chunks.max(1) * CHUNK_AREA) as f32;
-        // Ближе туман: начало ~25% дальности, полная плотность к ~55%.
-        let fog_start = max_view_distance * 0.25;
-        let fog_end = max_view_distance * 0.55;
+        // Более резкий и короткий туман: начало ~35% дальности, полная плотность к ~50%.
+        let fog_start = max_view_distance * 0.35;
+        let fog_end = max_view_distance * 0.50;
+        let sky_color = self.config.graphics.sky_color;
 
         self.renderer.update_consts(
             &mut self.data.globals,
@@ -380,6 +381,7 @@ impl<'a> State<'a> {
                 ],
                 fog_start,
                 fog_end,
+                sky_color,
             )],
         );
 

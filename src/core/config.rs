@@ -37,6 +37,8 @@ pub struct GraphicsConfig {
     /// Дальность прорисовки в чанках (квадратный радиус), влияет на размеры стриминга мира.
     pub render_distance_chunks: usize,
     pub fov_y_degrees: f32,
+    /// Цвет неба и тумана (RGB, 0.0..1.0).
+    pub sky_color: [f32; 3],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +134,7 @@ impl Default for GraphicsConfig {
             vsync: true,
             render_distance_chunks: 32,
             fov_y_degrees: 60.0,
+            sky_color: [0.60, 0.75, 0.90],
         }
     }
 }

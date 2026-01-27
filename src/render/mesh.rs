@@ -59,7 +59,7 @@ impl<V: Vertex> Mesh<V> {
         }
     }
 
-    pub fn iter_verts(&self) -> std::slice::Iter<V> {
+    pub fn iter_verts(&self) -> std::slice::Iter<'_, V> {
         self.verts.iter()
     }
 

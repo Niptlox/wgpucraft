@@ -31,10 +31,15 @@ pub struct Renderer<'a> {
     pub queue: wgpu::Queue,
     pub layouts: Layouts,
     depth_texture: Texture,
+    clear_color: wgpu::Color,
 }
 
 impl<'a> Renderer<'a> {
-    pub fn new(window: &'a SysWindow, present_mode: wgpu::PresentMode) -> Self {
+    pub fn new(
+        window: &'a SysWindow,
+        present_mode: wgpu::PresentMode,
+        sky_color: [f32; 3],
+    ) -> Self {
         let size = window.inner_size();
 
         // Инстанс — это дескриптор для GPU.
@@ -104,6 +109,12 @@ impl<'a> Renderer<'a> {
         };
 
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
+        let clear_color = wgpu::Color {
+            r: sky_color[0] as f64,
+            g: sky_color[1] as f64,
+            b: sky_color[2] as f64,
+            a: 1.0,
+        };
 
         Self {
             surface,
@@ -114,6 +125,7 @@ impl<'a> Renderer<'a> {
             window,
             layouts,
             depth_texture,
+            clear_color,
         }
     }
 
@@ -224,12 +236,7 @@ impl<'a> Renderer<'a> {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(self.clear_color),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

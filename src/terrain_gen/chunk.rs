@@ -25,6 +25,8 @@ pub struct Chunk {
     pub offset: [i32; 3],
     pub mesh: Mesh<BlockVertex>,
     pub dirty: bool,
+    /// Флаг, что содержимое нужно сохранить на диск.
+    pub needs_save: bool,
     layer_meshes: Vec<LayerMesh>,
     layer_dirty: Vec<bool>,
     layer_spans: Vec<LayerSpan>,
@@ -72,6 +74,7 @@ impl Chunk {
             offset,
             mesh,
             dirty: false,
+            needs_save: false,
             layer_meshes: vec![LayerMesh::default(); CHUNK_Y_SIZE],
             layer_dirty: vec![true; CHUNK_Y_SIZE],
             layer_spans: vec![LayerSpan::default(); CHUNK_Y_SIZE],
@@ -122,44 +125,48 @@ impl Chunk {
         for y in 0..CHUNK_Y_SIZE {
             for x in 0..CHUNK_AREA_WITH_PADDING {
                 for z in 0..CHUNK_AREA_WITH_PADDING {
-                    if y > max_biome_height {
-                        continue; // Пропускаем высоту выше биома
-                    }
-                    #[cfg(feature = "tracy")]
-                    let _inner_span = span!(" creating single block");
-
-                    if y < (biome.base_height - 1.0) as usize {
-                        if let Some(block) = self.get_block_mut(y, x, z) {
-                            *block = MaterialType::DIRT;
-                        }
-                        continue;
-                    }
-
-                    let local_x = x as i32 - 1;
-                    let local_z = z as i32 - 1;
-                    let world_pos =
-                        local_pos_to_world(self.offset, Vector3::new(local_x, y as i32, local_z));
-                    let height_variation = noise_generator.get_height(
-                        world_pos.x as f32,
-                        world_pos.z as f32,
-                        biome.frequency,
-                        biome.amplitude,
-                    );
-                    let new_height = (biome.base_height + height_variation).round() as usize;
-
-                    let block_type = if y > new_height {
-                        if y <= land_level {
-                            MaterialType::WATER
-                        } else {
-                            MaterialType::AIR
-                        }
-                    } else if y == new_height {
-                        MaterialType::GRASS
-                    } else if y == 0 {
-                        MaterialType::ROCK
+                    // Чанк может переиспользоваться: обязательно обнуляем старые данные
+                    // на высотах, куда новый биом не дотягивается.
+                    let block_type = if y > max_biome_height {
+                        MaterialType::AIR
                     } else {
-                        MaterialType::DIRT
+                        #[cfg(feature = "tracy")]
+                        let _inner_span = span!(" creating single block");
+
+                        if y < (biome.base_height - 1.0) as usize {
+                            MaterialType::DIRT
+                        } else {
+                            let local_x = x as i32 - 1;
+                            let local_z = z as i32 - 1;
+                            let world_pos = local_pos_to_world(
+                                self.offset,
+                                Vector3::new(local_x, y as i32, local_z),
+                            );
+                            let height_variation = noise_generator.get_height(
+                                world_pos.x as f32,
+                                world_pos.z as f32,
+                                biome.frequency,
+                                biome.amplitude,
+                            );
+                            let new_height =
+                                (biome.base_height + height_variation).round() as usize;
+
+                            if y > new_height {
+                                if y <= land_level {
+                                    MaterialType::WATER
+                                } else {
+                                    MaterialType::AIR
+                                }
+                            } else if y == new_height {
+                                MaterialType::GRASS
+                            } else if y == 0 {
+                                MaterialType::ROCK
+                            } else {
+                                MaterialType::DIRT
+                            }
+                        }
                     };
+
                     if let Some(block) = self.get_block_mut(y, x, z) {
                         *block = block_type;
                     }
@@ -416,6 +423,7 @@ impl ChunkManager {
             if let Some(block) = chunk.get_block_mut(y as usize, x as usize, z as usize) {
                 *block = material;
                 chunk.dirty = true;
+                chunk.needs_save = true;
                 chunk.mark_dirty_y(y as usize);
                 println!("Block updated at world position: {:?}", world_pos);
                 touched.push(index);
@@ -445,6 +453,7 @@ impl ChunkManager {
                                 *pad_block = material;
                             }
                             neigh_chunk.mark_dirty_y(ny);
+                            neigh_chunk.needs_save = true;
                         }
                         neigh_chunk.dirty = true;
                     }
@@ -476,7 +485,9 @@ impl ChunkManager {
     pub fn remove_chunk_from_map(&mut self, index: usize) {
         if let Some(old_offset) = self.index_offset.get(index).copied() {
             self.offset_index_map.remove(&old_offset);
-            self.index_offset[index] = [0, 0, 0];
+            // Используем заведомо "пустой" оффсет, чтобы не затереть валидную запись
+            // для реально существующего чанка в (0, 0, 0).
+            self.index_offset[index] = [i32::MIN, i32::MIN, i32::MIN];
         }
     }
 }
@@ -509,7 +520,7 @@ fn world_pos_to_chunk_and_local(world_pos: Vector3<i32>) -> ([i32; 3], Vector3<i
 pub fn local_pos_to_world(offset: [i32; 3], local_pos: Vector3<i32>) -> Vector3<f32> {
     Vector3::new(
         local_pos.x as f32 + (offset[0] as f32 * CHUNK_AREA as f32),
-        local_pos.y as f32 + (offset[1] as f32 * CHUNK_AREA as f32),
+        local_pos.y as f32 + (offset[1] as f32 * CHUNK_Y_SIZE as f32),
         local_pos.z as f32 + (offset[2] as f32 * CHUNK_AREA as f32),
     )
 }
@@ -560,6 +571,7 @@ impl Chunk {
         }
         self.offset = offset;
         self.dirty = false;
+        self.needs_save = false;
         self.dirty_y_range = None;
         Ok(())
     }

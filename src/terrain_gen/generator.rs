@@ -604,8 +604,8 @@ impl TerrainGen {
 
     fn shrink_and_free_chunk(&mut self, device: &wgpu::Device, chunk_index: usize) {
         if let Some(chunk_arc) = self.chunks.get_chunk(chunk_index) {
-            if let Ok(chunk) = chunk_arc.read() {
-                if chunk.dirty {
+            if let Ok(mut chunk) = chunk_arc.write() {
+                if chunk.needs_save {
                     let path = self.save_dir.join(format!(
                         "chunk_{}_{}_{}.bin",
                         chunk.offset[0], chunk.offset[1], chunk.offset[2]
@@ -623,6 +623,7 @@ impl TerrainGen {
                         })
                         .collect();
                     let _ = self.save_tx.send((path, materials));
+                    chunk.needs_save = false;
                 }
             }
         }
@@ -711,16 +712,20 @@ impl Draw for TerrainGen {
         render_pass.set_bind_group(0, &self.atlas.bind_group, &[]);
         render_pass.set_bind_group(1, globals, &[]);
 
-        for chunk_model in &self.chunk_models {
-            let chunk_model = chunk_model.read().unwrap();
+        // Рисуем только те модели, что реально привязаны к видимым слотам.
+        let chunk_indices = self.chunk_indices.read().unwrap();
+        for idx_opt in chunk_indices.iter().copied().flatten() {
+            if let Some(chunk_model) = self.chunk_models.get(idx_opt) {
+                let chunk_model = chunk_model.read().unwrap();
 
-            let vertex_buffer = chunk_model.vbuf().slice(..);
-            let index_buffer = chunk_model.ibuf().slice(..);
-            let num_indices = chunk_model.num_indices;
+                let vertex_buffer = chunk_model.vbuf().slice(..);
+                let index_buffer = chunk_model.ibuf().slice(..);
+                let num_indices = chunk_model.num_indices;
 
-            render_pass.set_vertex_buffer(0, vertex_buffer);
-            render_pass.set_index_buffer(index_buffer, wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..num_indices, 0, 0..1 as _);
+                render_pass.set_vertex_buffer(0, vertex_buffer);
+                render_pass.set_index_buffer(index_buffer, wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..num_indices, 0, 0..1 as _);
+            }
         }
 
         if let Some(model) = &self.highlight_model {

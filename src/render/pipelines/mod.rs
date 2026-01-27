@@ -27,18 +27,25 @@ impl Globals {
         camera_pos: [f32; 3],
         fog_start: f32,
         fog_end: f32,
+        sky_color: [f32; 3],
     ) -> Self {
         Self {
             view_proj,
-            camera_pos: [camera_pos[0], camera_pos[1], camera_pos[2], 0.0],
-            fog: [fog_start, fog_end, 0.0, 0.0],
+            camera_pos: [camera_pos[0], camera_pos[1], camera_pos[2], sky_color[2]],
+            fog: [fog_start, fog_end, sky_color[0], sky_color[1]],
         }
     }
 }
 
 impl Default for Globals {
     fn default() -> Self {
-        Self::new(Matrix4::identity().into(), [0.0; 3], 0.0, 1.0)
+        Self::new(
+            Matrix4::identity().into(),
+            [0.0; 3],
+            0.0,
+            1.0,
+            [0.6, 0.75, 0.9],
+        )
     }
 }
 
@@ -130,7 +137,7 @@ impl GlobalsLayouts {
         }
     }
 
-    fn base_global_entries(global_model: &GlobalModel) -> Vec<wgpu::BindGroupEntry> {
+    fn base_global_entries(global_model: &GlobalModel) -> Vec<wgpu::BindGroupEntry<'_>> {
         vec![
             // Глобальный uniform
             wgpu::BindGroupEntry {

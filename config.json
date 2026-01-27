@@ -8,8 +8,13 @@
   "graphics": {
     "fps_cap": 60,
     "vsync": true,
-    "render_distance_chunks": 64,
-    "fov_y_degrees": 60.0
+    "render_distance_chunks": 32,
+    "fov_y_degrees": 60.0,
+    "sky_color": [
+      0.5,
+      0.78,
+      1.0
+    ]
   },
   "world": {
     "seed": 10
