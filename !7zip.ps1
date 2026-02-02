@@ -8,6 +8,7 @@ $SevenZip    = "C:\Program Files\7-Zip\7z.exe"
 
 $ExcludeFolders = @(
     ".vers",
+    "saves",
     "target",
     "target_tmp",
     "node_modules",

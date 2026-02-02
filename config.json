@@ -3,7 +3,7 @@
     "mouse_sensitivity": 0.35,
     "invert_y": false,
     "move_speed": 12.0,
-    "fly_speed": 48.0
+    "fly_speed": 18.0
   },
   "graphics": {
     "fps_cap": 60,
@@ -11,9 +11,9 @@
     "render_distance_chunks": 32,
     "fov_y_degrees": 60.0,
     "sky_color": [
-      0.5,
-      0.78,
-      1.0
+      0.6,
+      0.75,
+      0.9
     ]
   },
   "world": {
@@ -34,7 +34,7 @@
   "debug": {
     "show_overlay": true,
     "show_fps": true,
-    "wireframe": true
+    "wireframe": false
   },
   "player": {
     "mode": "adventure",
@@ -46,14 +46,14 @@
     "max_fall_speed": 48.0
   },
   "terrain": {
-    "jobs_in_flight": 12,
-    "dirty_chunks_per_frame": 32,
+    "jobs_in_flight": 8,
+    "dirty_chunks_per_frame": 2,
     "min_vertex_cap": 4096,
     "min_index_cap": 8192,
-    "land_level": 9
+    "land_level": 12
   },
   "ui": {
-    "font_path": "assets/fonts/MatrixSansVideo-Regular.ttf",
+    "font_path": "assets/fonts/MatrixSans-Regular.ttf",
     "font_size": 18.0,
     "font_weight_px": 0,
     "text_scale": 1.0
