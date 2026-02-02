@@ -12,9 +12,9 @@ pub enum Val {
 }
 
 impl Val {
-    pub fn resolve(&self, parent: f32) -> f32 {
+    pub fn resolve(&self, parent: f32, scale: f32) -> f32 {
         match self {
-            Val::Px(v) => *v,
+            Val::Px(v) => *v * scale,
             Val::Percent(p) => parent * *p,
         }
     }
@@ -29,14 +29,14 @@ pub struct RectSpec {
 }
 
 impl RectSpec {
-    pub fn resolve(&self, parent: [f32; 2]) -> [f32; 4] {
+    pub fn resolve(&self, parent: [f32; 2], scale: f32) -> [f32; 4] {
         let pw = parent[0];
         let ph = parent[1];
 
-        let rx = self.x.resolve(pw);
-        let ry = self.y.resolve(ph);
-        let rw = self.w.resolve(pw);
-        let rh = self.h.resolve(ph);
+        let rx = self.x.resolve(pw, scale);
+        let ry = self.y.resolve(ph, scale);
+        let rw = self.w.resolve(pw, scale);
+        let rh = self.h.resolve(ph, scale);
 
         [rx, ry, rw, rh]
     }
@@ -126,13 +126,14 @@ impl UiNode {
     pub fn preferred_size(&self, parent_size: [f32; 2], ctx: &MeasureCtx) -> [f32; 2] {
         match &self.layout {
             Layout::Absolute { rect, .. } => {
-                let r = rect.resolve(parent_size);
+                let r = rect.resolve(parent_size, ctx.text_scale);
                 [r[2], r[3]]
             }
             Layout::FlexColumn { gap, padding, .. } => {
+                let pad = padding * ctx.text_scale;
                 let inner_parent = [
-                    (parent_size[0] - padding * 2.0).max(0.0),
-                    (parent_size[1] - padding * 2.0).max(0.0),
+                    (parent_size[0] - pad * 2.0).max(0.0),
+                    (parent_size[1] - pad * 2.0).max(0.0),
                 ];
                 let mut height: f32 = 0.0;
                 let mut width: f32 = 0.0;
@@ -142,14 +143,15 @@ impl UiNode {
                     width = width.max(size[0]);
                 }
                 if !self.children.is_empty() {
-                    height += *gap * (self.children.len() as f32 - 1.0);
+                    height += *gap * ctx.text_scale * (self.children.len() as f32 - 1.0);
                 }
-                [width + padding * 2.0, height + padding * 2.0]
+                [width + pad * 2.0, height + pad * 2.0]
             }
             Layout::FlexRow { gap, padding, .. } => {
+                let pad = padding * ctx.text_scale;
                 let inner_parent = [
-                    (parent_size[0] - padding * 2.0).max(0.0),
-                    (parent_size[1] - padding * 2.0).max(0.0),
+                    (parent_size[0] - pad * 2.0).max(0.0),
+                    (parent_size[1] - pad * 2.0).max(0.0),
                 ];
                 let mut width: f32 = 0.0;
                 let mut height: f32 = 0.0;
@@ -159,9 +161,9 @@ impl UiNode {
                     height = height.max(size[1]);
                 }
                 if !self.children.is_empty() {
-                    width += *gap * (self.children.len() as f32 - 1.0);
+                    width += *gap * ctx.text_scale * (self.children.len() as f32 - 1.0);
                 }
-                [width + padding * 2.0, height + padding * 2.0]
+                [width + pad * 2.0, height + pad * 2.0]
             }
         }
     }
@@ -175,9 +177,9 @@ impl UiNode {
     ) {
         match &self.layout {
             Layout::Absolute { rect, anchor } => {
-                let mut r = rect.resolve(parent_size);
+                let mut r = rect.resolve(parent_size, ctx.text_scale);
                 if let Some(anchor) = anchor {
-                    Self::apply_anchor(&mut r, parent_size, anchor);
+                    Self::apply_anchor(&mut r, parent_size, anchor, ctx.text_scale);
                 }
                 let rect_world = [origin[0] + r[0], origin[1] + r[1], r[2], r[3]];
                 out.push(ResolvedNode {
@@ -194,7 +196,8 @@ impl UiNode {
                 padding,
                 align,
             } => {
-                let inner_w = (parent_size[0] - padding * 2.0).max(0.0);
+                let pad = padding * ctx.text_scale;
+                let inner_w = (parent_size[0] - pad * 2.0).max(0.0);
                 if let Some(el) = &self.element {
                     out.push(ResolvedNode {
                         id: self.id.clone(),
@@ -202,7 +205,7 @@ impl UiNode {
                         element: Some(el.clone()),
                     });
                 }
-                let mut cursor_y = *padding;
+                let mut cursor_y = pad;
                 for child in &self.children {
                     let child_size = child.preferred_size([inner_w, parent_size[1]], ctx);
                     let width = match align {
@@ -213,14 +216,14 @@ impl UiNode {
                     };
                     let height = child_size[1];
                     let x = match align {
-                        Align::Stretch => *padding,
-                        Align::Start => *padding,
-                        Align::Center => *padding + (inner_w - width) * 0.5,
-                        Align::End => *padding + (inner_w - width),
+                        Align::Stretch => pad,
+                        Align::Start => pad,
+                        Align::Center => pad + (inner_w - width) * 0.5,
+                        Align::End => pad + (inner_w - width),
                     };
                     let rect_world = [origin[0] + x, origin[1] + cursor_y, width, height];
                     child.compute_layout([rect_world[0], rect_world[1]], [width, height], ctx, out);
-                    cursor_y += height + gap;
+                    cursor_y += height + gap * ctx.text_scale;
                 }
             }
             Layout::FlexRow {
@@ -228,7 +231,8 @@ impl UiNode {
                 padding,
                 align,
             } => {
-                let inner_h = (parent_size[1] - padding * 2.0).max(0.0);
+                let pad = padding * ctx.text_scale;
+                let inner_h = (parent_size[1] - pad * 2.0).max(0.0);
                 if let Some(el) = &self.element {
                     out.push(ResolvedNode {
                         id: self.id.clone(),
@@ -236,7 +240,7 @@ impl UiNode {
                         element: Some(el.clone()),
                     });
                 }
-                let mut cursor_x = *padding;
+                let mut cursor_x = pad;
                 for child in &self.children {
                     let child_size = child.preferred_size(parent_size, ctx);
                     let height = match align {
@@ -247,40 +251,40 @@ impl UiNode {
                     };
                     let width = child_size[0];
                     let y = match align {
-                        Align::Stretch => *padding,
-                        Align::Start => *padding,
-                        Align::Center => *padding + (inner_h - height) * 0.5,
-                        Align::End => *padding + (inner_h - height),
+                        Align::Stretch => pad,
+                        Align::Start => pad,
+                        Align::Center => pad + (inner_h - height) * 0.5,
+                        Align::End => pad + (inner_h - height),
                     };
                     let rect_world = [origin[0] + cursor_x, origin[1] + y, width, height];
                     child.compute_layout([rect_world[0], rect_world[1]], [width, height], ctx, out);
-                    cursor_x += width + gap;
+                    cursor_x += width + gap * ctx.text_scale;
                 }
             }
         }
     }
 
-    fn apply_anchor(rect: &mut [f32; 4], parent: [f32; 2], anchor: &Anchors) {
+    fn apply_anchor(rect: &mut [f32; 4], parent: [f32; 2], anchor: &Anchors, scale: f32) {
         if let (Some(left), Some(right)) = (anchor.left, anchor.right) {
-            let l = left.resolve(parent[0]);
-            let r = right.resolve(parent[0]);
+            let l = left.resolve(parent[0], scale);
+            let r = right.resolve(parent[0], scale);
             rect[0] = l;
             rect[2] = (parent[0] - l - r).max(0.0);
         } else if let Some(left) = anchor.left {
-            rect[0] = left.resolve(parent[0]);
+            rect[0] = left.resolve(parent[0], scale);
         } else if let Some(right) = anchor.right {
-            rect[0] = parent[0] - right.resolve(parent[0]) - rect[2];
+            rect[0] = parent[0] - right.resolve(parent[0], scale) - rect[2];
         }
 
         if let (Some(top), Some(bottom)) = (anchor.top, anchor.bottom) {
-            let t = top.resolve(parent[1]);
-            let b = bottom.resolve(parent[1]);
+            let t = top.resolve(parent[1], scale);
+            let b = bottom.resolve(parent[1], scale);
             rect[1] = t;
             rect[3] = (parent[1] - t - b).max(0.0);
         } else if let Some(top) = anchor.top {
-            rect[1] = top.resolve(parent[1]);
+            rect[1] = top.resolve(parent[1], scale);
         } else if let Some(bottom) = anchor.bottom {
-            rect[1] = parent[1] - bottom.resolve(parent[1]) - rect[3];
+            rect[1] = parent[1] - bottom.resolve(parent[1], scale) - rect[3];
         }
     }
 }
@@ -311,7 +315,13 @@ mod tests {
             element: None,
         };
 
-        let resolved = node.resolve_tree([200.0, 100.0], &MeasureCtx::default());
+        let resolved = node.resolve_tree(
+            [200.0, 100.0],
+            &MeasureCtx {
+                text_scale: 1.0,
+                ..Default::default()
+            },
+        );
         assert_eq!(resolved.len(), 1);
         let rect = resolved[0].rect;
         // Anchors shrink width/height by left/right and top/bottom

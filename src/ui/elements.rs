@@ -18,8 +18,8 @@ impl LabelSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::ui::BitmapFont;
+    use std::sync::Arc;
 
     #[test]
     fn label_pref_size_scales_with_font() {

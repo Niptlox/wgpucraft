@@ -51,7 +51,9 @@ mod tests {
 
     #[test]
     fn panel_variant_parses() {
-        let value = crate::ui::UiElement::Panel { color: [1, 2, 3, 4] };
+        let value = crate::ui::UiElement::Panel {
+            color: [1, 2, 3, 4],
+        };
         let ron_str = ron::to_string(&value).expect("serialize panel");
         println!("serialized panel: {}", ron_str);
         let _el: crate::ui::UiElement =

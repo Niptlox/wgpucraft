@@ -3,6 +3,7 @@ pub mod font;
 pub mod layout;
 pub mod loader;
 pub mod renderer;
+pub mod style;
 
 pub use elements::{ButtonSpec, LabelSpec, UiElement};
 pub use font::BitmapFont;

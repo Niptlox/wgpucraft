@@ -1,7 +1,11 @@
+
 use crate::{
     core::config::AppConfig,
     text::{TextStyle, TextSystem},
-    ui::{BitmapFont, ButtonSpec, MeasureCtx, UiElement, UiNode},
+    ui::{
+        style::StyleSheet, BitmapFont, ButtonSpec, Layout as UiLayout, MeasureCtx, UiElement,
+        UiNode,
+    },
 };
 use glam::Vec2;
 use icons_atlas::IconType;
@@ -78,6 +82,7 @@ struct MenuOverlay {
     aspect_correction: f32,
     hovered: Option<MenuAction>,
     font: Arc<BitmapFont>,
+    styles: Arc<crate::ui::style::StyleSheet>,
     tree: Option<UiNode>,
     resolved: Vec<crate::ui::ResolvedNode>,
     measure: MeasureCtx,
@@ -184,6 +189,8 @@ impl HUD {
             BitmapFont::load_from_path(&ui_cfg.font_path, ui_cfg.font_size, ui_cfg.font_weight_px)
                 .expect("Failed to load UI font from config"),
         );
+        let styles =
+            Arc::new(StyleSheet::load("assets/ui/styles.ron").expect("Failed to load UI styles"));
         let palette = IconType::all();
         let selected_index = 0;
         // Загрузка текстур интерфейса
@@ -325,6 +332,7 @@ impl HUD {
                 &renderer.queue,
                 global_layout,
                 font,
+                styles,
                 ui_cfg.text_scale,
                 aspect_correction,
             ),
@@ -621,6 +629,7 @@ impl MenuOverlay {
         queue: &wgpu::Queue,
         global_layout: &GlobalsLayouts,
         font: Arc<BitmapFont>,
+        styles: Arc<StyleSheet>,
         text_scale: f32,
         aspect_correction: f32,
     ) -> Self {
@@ -646,6 +655,7 @@ impl MenuOverlay {
             aspect_correction,
             hovered: None,
             font: font.clone(),
+            styles,
             tree: None,
             resolved: Vec::new(),
             measure: MeasureCtx {
@@ -696,6 +706,7 @@ impl MenuOverlay {
             MenuPage::Advanced => build_advanced_menu(config),
         };
         self.apply_entries(&mut tree, &entries);
+        self.apply_styles(&mut tree);
 
         self.tree = Some(tree);
         self.hovered = None;
@@ -728,6 +739,41 @@ impl MenuOverlay {
                 }
             });
         }
+    }
+
+    fn apply_styles(&self, tree: &mut UiNode) {
+        let s = &self.styles.menu;
+        Self::visit_nodes_mut(tree, &mut |node| {
+            if let Some(id) = node.id.as_deref() {
+                match id {
+                    "menu_buttons" => {
+                        if let UiLayout::FlexColumn { gap, padding, .. } = &mut node.layout {
+                            *gap = s.gap;
+                            *padding = s.padding;
+                        }
+                    }
+                    "menu_title" => {
+                        if let Some(UiElement::Label(lbl)) = &mut node.element {
+                            lbl.font_size = s.title_size;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(UiElement::Button(btn)) = &mut node.element {
+                btn.padding = s.button_padding;
+                btn.min_height = s.button_height;
+            }
+            if let Some(UiElement::Panel { color }) = &mut node.element {
+                *color = [
+                    s.panel_color.0,
+                    s.panel_color.1,
+                    s.panel_color.2,
+                    s.panel_color.3,
+                ];
+            }
+        });
     }
 
     fn visit_nodes_mut<F: FnMut(&mut UiNode)>(node: &mut UiNode, f: &mut F) {

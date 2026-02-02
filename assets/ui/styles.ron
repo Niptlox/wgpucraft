@@ -1,0 +1,10 @@
+(
+  menu: (
+    panel_color: (18, 22, 30, 220),
+    button_padding: 12.0,
+    button_height: 52.0,
+    gap: 10.0,
+    padding: 40.0,
+    title_size: 16.0,
+  ),
+)
