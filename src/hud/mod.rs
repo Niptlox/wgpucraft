@@ -1,10 +1,7 @@
 use crate::{
     core::config::AppConfig,
     text::{TextStyle, TextSystem},
-    ui::{
-        Align, BitmapFont, ButtonSpec, Layout as UiLayout, MeasureCtx, RectSpec, UiElement, UiNode,
-        Val,
-    },
+    ui::{BitmapFont, ButtonSpec, MeasureCtx, UiElement, UiNode},
 };
 use glam::Vec2;
 use icons_atlas::IconType;
@@ -76,13 +73,12 @@ struct MenuOverlay {
     element: HUDElement,
     buffer: Vec<u8>,
     size: (u32, u32),
-    entries: Vec<MenuEntry>,
     buttons: Vec<ButtonRect>,
     visible: bool,
-    title: String,
     aspect_correction: f32,
     hovered: Option<MenuAction>,
     font: Arc<BitmapFont>,
+    tree: Option<UiNode>,
     resolved: Vec<crate::ui::ResolvedNode>,
     measure: MeasureCtx,
 }
@@ -454,17 +450,7 @@ impl HUD {
     }
 
     pub fn open_menu(&mut self, page: MenuPage, config: &AppConfig, queue: &wgpu::Queue) {
-        let entries = match page {
-            MenuPage::Main => build_main_menu(),
-            MenuPage::Settings => build_settings_menu(config),
-            MenuPage::Advanced => build_advanced_menu(config),
-        };
-        let title = match page {
-            MenuPage::Main => "Меню",
-            MenuPage::Settings => "Настройки",
-            MenuPage::Advanced => "Продвинутые настройки",
-        };
-        self.menu.set_entries(title, entries, queue);
+        self.menu.load_page(page, config, queue);
         self.menu.visible = true;
     }
 
@@ -655,13 +641,12 @@ impl MenuOverlay {
             },
             buffer,
             size,
-            entries: Vec::new(),
             buttons: Vec::new(),
             visible: false,
-            title: String::new(),
             aspect_correction,
             hovered: None,
             font: font.clone(),
+            tree: None,
             resolved: Vec::new(),
             measure: MeasureCtx {
                 font: Some(font),
@@ -684,30 +669,81 @@ impl MenuOverlay {
         // Rebind to keep texture alive after device change (resize doesn't change device, but safe).
         self.element.bind_group =
             global_layout.bind_hud_texture(device, &self.element.texture, None);
-        // redraw with current entries to avoid stale hover rectangles
-        if !self.entries.is_empty() {
+        // redraw with current tree to avoid stale hover rectangles
+        if self.tree.is_some() {
             self.rebuild_layout();
             self.draw(queue);
         }
     }
 
-    fn set_entries(
-        &mut self,
-        title: impl Into<String>,
-        entries: Vec<MenuEntry>,
-        queue: &wgpu::Queue,
-    ) {
-        self.title = title.into();
-        self.entries = entries;
+    fn load_page(&mut self, page: MenuPage, config: &AppConfig, queue: &wgpu::Queue) {
+        let path = match page {
+            MenuPage::Main => "assets/ui/menu_main.ron",
+            MenuPage::Settings => "assets/ui/menu_settings.ron",
+            MenuPage::Advanced => "assets/ui/menu_advanced.ron",
+        };
+        let mut tree = crate::ui::load_ron(path).expect("failed to load menu RON");
+        let title_text = match page {
+            MenuPage::Main => "Меню",
+            MenuPage::Settings => "Настройки",
+            MenuPage::Advanced => "Продвинутые настройки",
+        };
+        self.apply_title(&mut tree, title_text);
+
+        let entries = match page {
+            MenuPage::Main => build_main_menu(),
+            MenuPage::Settings => build_settings_menu(config),
+            MenuPage::Advanced => build_advanced_menu(config),
+        };
+        self.apply_entries(&mut tree, &entries);
+
+        self.tree = Some(tree);
         self.hovered = None;
         self.rebuild_layout();
         self.draw(queue);
     }
 
+    fn apply_title(&self, tree: &mut UiNode, title: &str) {
+        Self::visit_nodes_mut(tree, &mut |node| {
+            if node.id.as_deref() == Some("menu_title") {
+                if let Some(UiElement::Label(lbl)) = &mut node.element {
+                    lbl.text = title.to_string();
+                }
+            }
+        });
+    }
+
+    fn apply_entries(&self, tree: &mut UiNode, entries: &[MenuEntry]) {
+        for entry in entries {
+            Self::visit_nodes_mut(tree, &mut |node| {
+                if node.id.as_deref() == Some(entry.action.key()) {
+                    if let Some(UiElement::Button(btn)) = &mut node.element {
+                        btn.text = entry.title.clone();
+                        btn.detail = if entry.detail.is_empty() {
+                            None
+                        } else {
+                            Some(entry.detail.clone())
+                        };
+                    }
+                }
+            });
+        }
+    }
+
+    fn visit_nodes_mut<F: FnMut(&mut UiNode)>(node: &mut UiNode, f: &mut F) {
+        f(node);
+        for child in node.children.iter_mut() {
+            Self::visit_nodes_mut(child, f);
+        }
+    }
+
     fn rebuild_layout(&mut self) {
-        let layout = self.build_tree();
-        self.resolved =
-            layout.resolve_tree([self.size.0 as f32, self.size.1 as f32], &self.measure);
+        if let Some(tree) = &self.tree {
+            self.resolved =
+                tree.resolve_tree([self.size.0 as f32, self.size.1 as f32], &self.measure);
+        } else {
+            self.resolved.clear();
+        }
         self.buttons = self
             .resolved
             .iter()
@@ -719,86 +755,6 @@ impl MenuOverlay {
                 })
             })
             .collect();
-    }
-
-    fn build_tree(&self) -> UiNode {
-        let mut children = Vec::new();
-
-        if !self.title.is_empty() {
-            children.push(UiNode {
-                id: Some("menu_title".into()),
-                layout: UiLayout::Absolute {
-                    rect: RectSpec {
-                        x: Val::Percent(0.0),
-                        y: Val::Px(20.0),
-                        w: Val::Percent(1.0),
-                        h: Val::Px(32.0),
-                    },
-                    anchor: None,
-                },
-                children: Vec::new(),
-                element: Some(UiElement::Label(crate::ui::LabelSpec {
-                    text: self.title.clone(),
-                    font_size: 16.0,
-                })),
-            });
-        }
-
-        let button_nodes = self
-            .entries
-            .iter()
-            .map(|entry| UiNode {
-                id: Some(entry.action.key().to_string()),
-                layout: UiLayout::Absolute {
-                    rect: RectSpec {
-                        x: Val::Percent(0.0),
-                        y: Val::Px(0.0),
-                        w: Val::Percent(1.0),
-                        h: Val::Px(60.0),
-                    },
-                    anchor: None,
-                },
-                children: Vec::new(),
-                element: Some(UiElement::Button(ButtonSpec {
-                    text: entry.title.clone(),
-                    detail: if entry.detail.is_empty() {
-                        None
-                    } else {
-                        Some(entry.detail.clone())
-                    },
-                    padding: 14.0,
-                    min_height: 60.0,
-                })),
-            })
-            .collect::<Vec<_>>();
-
-        children.push(UiNode {
-            id: Some("menu_buttons".into()),
-            layout: UiLayout::FlexColumn {
-                gap: 10.0,
-                padding: 60.0,
-                align: Align::Stretch,
-            },
-            children: button_nodes,
-            element: Some(UiElement::Panel {
-                color: [18, 22, 30, 220],
-            }),
-        });
-
-        UiNode {
-            id: Some("menu_root".into()),
-            layout: UiLayout::Absolute {
-                rect: RectSpec {
-                    x: Val::Px(0.0),
-                    y: Val::Px(0.0),
-                    w: Val::Percent(1.0),
-                    h: Val::Percent(1.0),
-                },
-                anchor: None,
-            },
-            children,
-            element: None,
-        }
     }
 
     fn hover_at(&mut self, clip_x: f32, clip_y: f32, queue: &wgpu::Queue) {

@@ -15,6 +15,34 @@ impl LabelSpec {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use crate::ui::BitmapFont;
+
+    #[test]
+    fn label_pref_size_scales_with_font() {
+        let font = Arc::new(
+            BitmapFont::load_from_path("assets/fonts/OpenLukyanov.ttf", 16.0, 400)
+                .expect("font available for tests"),
+        );
+        let ctx = MeasureCtx {
+            font: Some(font),
+            text_scale: 1.0,
+        };
+        let spec = LabelSpec {
+            text: "Test".into(),
+            font_size: 16.0,
+        };
+        let el = UiElement::Label(spec);
+        let sz = el.preferred_size(&ctx);
+        // height should be at least font size, width positive
+        assert!(sz[0] > 0.0);
+        assert!(sz[1] >= 16.0);
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ButtonSpec {
     pub text: String,

@@ -284,3 +284,69 @@ impl UiNode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_and_anchor_resolve_correctly() {
+        let node = UiNode {
+            id: Some("root".into()),
+            layout: Layout::Absolute {
+                rect: RectSpec {
+                    x: Val::Percent(0.0),
+                    y: Val::Percent(0.0),
+                    w: Val::Percent(1.0),
+                    h: Val::Percent(1.0),
+                },
+                anchor: Some(Anchors {
+                    left: Some(Val::Px(10.0)),
+                    right: Some(Val::Px(20.0)),
+                    top: Some(Val::Px(5.0)),
+                    bottom: Some(Val::Px(15.0)),
+                }),
+            },
+            children: vec![],
+            element: None,
+        };
+
+        let resolved = node.resolve_tree([200.0, 100.0], &MeasureCtx::default());
+        assert_eq!(resolved.len(), 1);
+        let rect = resolved[0].rect;
+        // Anchors shrink width/height by left/right and top/bottom
+        assert_eq!(rect, [10.0, 5.0, 170.0, 80.0]);
+    }
+
+    #[test]
+    fn flex_column_measures_children() {
+        let child = UiNode {
+            id: None,
+            layout: Layout::Absolute {
+                rect: RectSpec {
+                    x: Val::Px(0.0),
+                    y: Val::Px(0.0),
+                    w: Val::Px(50.0),
+                    h: Val::Px(20.0),
+                },
+                anchor: None,
+            },
+            children: vec![],
+            element: None,
+        };
+        let column = UiNode {
+            id: Some("col".into()),
+            layout: Layout::FlexColumn {
+                gap: 5.0,
+                padding: 10.0,
+                align: Align::Start,
+            },
+            children: vec![child],
+            element: None,
+        };
+        let size = column.preferred_size([200.0, 200.0], &MeasureCtx::default());
+        // width: 50 + 2*10 padding; height: 20 + 2*10 padding, no gap for single child.
+        assert!((size[0] - 70.0).abs() < 1e-3);
+        assert!((size[1] - 40.0).abs() < 1e-3);
+    }
+}

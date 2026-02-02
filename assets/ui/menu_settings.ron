@@ -1,0 +1,71 @@
+(
+    id: Some("menu_root"),
+    layout: Absolute(
+        rect: (x: Px(0.0), y: Px(0.0), w: Percent(1.0), h: Percent(1.0)),
+        anchor: None,
+    ),
+    children: [
+        (
+            id: Some("menu_title"),
+            layout: Absolute(
+                rect: (x: Percent(0.0), y: Px(20.0), w: Percent(1.0), h: Px(32.0)),
+                anchor: None,
+            ),
+            children: [],
+            element: Some(Label((text: "Settings", font_size: 16.0))),
+        ),
+        (
+            id: Some("menu_buttons"),
+            layout: FlexColumn(gap: 10.0, padding: 40.0, align: Stretch),
+            children: [
+                (
+                    id: Some("cycle_fps_cap"),
+                    layout: Absolute(
+                        rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(52.0)),
+                        anchor: None,
+                    ),
+                    children: [],
+                    element: Some(Button((text: "FPS", detail: None, padding: 12.0, min_height: 52.0))),
+                ),
+                (
+                    id: Some("toggle_vsync"),
+                    layout: Absolute(
+                        rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(52.0)),
+                        anchor: None,
+                    ),
+                    children: [],
+                    element: Some(Button((text: "VSync", detail: None, padding: 12.0, min_height: 52.0))),
+                ),
+                (
+                    id: Some("cycle_render_distance"),
+                    layout: Absolute(
+                        rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(52.0)),
+                        anchor: None,
+                    ),
+                    children: [],
+                    element: Some(Button((text: "Render Distance", detail: None, padding: 12.0, min_height: 52.0))),
+                ),
+                (
+                    id: Some("cycle_fov"),
+                    layout: Absolute(
+                        rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(52.0)),
+                        anchor: None,
+                    ),
+                    children: [],
+                    element: Some(Button((text: "FOV", detail: None, padding: 12.0, min_height: 52.0))),
+                ),
+                (
+                    id: Some("back_to_main"),
+                    layout: Absolute(
+                        rect: (x: Percent(0.0), y: Px(0.0), w: Percent(1.0), h: Px(52.0)),
+                        anchor: None,
+                    ),
+                    children: [],
+                    element: Some(Button((text: "Back", detail: None, padding: 12.0, min_height: 52.0))),
+                ),
+            ],
+            element: Some(Panel(color:(18, 22, 30, 220))),
+        ),
+    ],
+    element: None,
+)
