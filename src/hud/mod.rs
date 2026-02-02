@@ -1,11 +1,14 @@
 use crate::{
     core::config::AppConfig,
+    text::{TextStyle, TextSystem},
     ui::{
         Align, BitmapFont, ButtonSpec, Layout as UiLayout, MeasureCtx, RectSpec, UiElement, UiNode,
         Val,
     },
 };
+use glam::Vec2;
 use icons_atlas::IconType;
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::render::{
@@ -41,6 +44,11 @@ pub struct HUD {
     debug_overlay: Option<DebugOverlay>,
     aspect_correction: f32,
     icon_atlas_size: (f32, f32),
+    text: RefCell<TextSystem>,
+    font_handle: crate::text::FontHandle,
+    screen_size: [f32; 2],
+    text_scale: f32,
+    last_stats: OverlayStats,
 }
 
 struct HUDElement {
@@ -74,7 +82,6 @@ struct MenuOverlay {
     font: Arc<BitmapFont>,
     resolved: Vec<crate::ui::ResolvedNode>,
     measure: MeasureCtx,
-    text_scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,13 +171,19 @@ impl HUD {
         ui_cfg: &crate::core::config::UiConfig,
     ) -> Self {
         let aspect_correction = renderer.size.height as f32 / renderer.size.width as f32;
+        let mut text_system = TextSystem::new(
+            &renderer.device,
+            &renderer.queue,
+            renderer.config.format,
+            &global_layout.globals,
+        )
+        .expect("Failed to init text system");
+        let font_handle = text_system
+            .load_font(&ui_cfg.font_path)
+            .expect("Failed to load text font");
         let font = Arc::new(
-            BitmapFont::load_from_path(
-                &ui_cfg.font_path,
-                ui_cfg.font_size,
-                ui_cfg.font_weight_px,
-            )
-            .expect("Failed to load UI font from config"),
+            BitmapFont::load_from_path(&ui_cfg.font_path, ui_cfg.font_size, ui_cfg.font_weight_px)
+                .expect("Failed to load UI font from config"),
         );
         let palette = IconType::all();
         let selected_index = 0;
@@ -296,8 +309,6 @@ impl HUD {
             Some(DebugOverlay::new(
                 renderer,
                 global_layout,
-                font.clone(),
-                ui_cfg.text_scale,
                 aspect_correction,
             ))
         } else {
@@ -323,6 +334,16 @@ impl HUD {
             debug_overlay,
             aspect_correction,
             icon_atlas_size,
+            text: RefCell::new(text_system),
+            font_handle,
+            screen_size: [renderer.size.width as f32, renderer.size.height as f32],
+            text_scale: ui_cfg.text_scale,
+            last_stats: OverlayStats {
+                fps: 0.0,
+                frame_ms: 0.0,
+                chunks_loaded: 0,
+                draw_calls: 0,
+            },
         }
     }
 
@@ -378,6 +399,7 @@ impl HUD {
         if let Some(overlay) = &mut self.debug_overlay {
             overlay.update(renderer, stats);
         }
+        self.last_stats = *stats;
     }
 
     pub fn draw_call_count(&self) -> usize {
@@ -391,6 +413,7 @@ impl HUD {
 
     pub fn resize(&mut self, renderer: &Renderer) {
         self.aspect_correction = renderer.size.height as f32 / renderer.size.width as f32;
+        self.screen_size = [renderer.size.width as f32, renderer.size.height as f32];
 
         let (crosshair_verts, crosshair_indices) =
             create_hud_quad(0.0, 0.0, 0.06, 0.06, self.aspect_correction);
@@ -492,6 +515,104 @@ impl Draw for HUD {
             render_pass.draw_indexed(0..element.model.num_indices, 0, 0..1);
         }
 
+        // Text rendering (GUI + overlays)
+        {
+            let mut text = self.text.borrow_mut();
+            let screen = self.screen_size;
+            let base_style = TextStyle {
+                color: [0.94, 0.94, 0.94, 1.0],
+                pixel_size: (self.text_scale * 18.0).round() as u32,
+            };
+            if let Some(_overlay) = &self.debug_overlay {
+                let stats = self.last_stats;
+                let lines = [
+                    format!("FPS   {:>5.1}", stats.fps),
+                    format!("MS    {:>5.2}", stats.frame_ms),
+                    format!("CHUNKS {:>4}", stats.chunks_loaded),
+                    format!("DRAWS  {:>4}", stats.draw_calls),
+                ];
+                let mut y = 16.0;
+                for line in lines.iter() {
+                    if let Ok(obj) = text.build_gui_text(
+                        line,
+                        self.font_handle,
+                        base_style,
+                        Vec2::new(12.0, y),
+                        screen,
+                    ) {
+                        text.draw(render_pass, None, &obj, screen);
+                    }
+                    y += base_style.pixel_size as f32 + 4.0;
+                }
+            }
+
+            if self.menu.visible {
+                let menu_size = (screen[0] * 0.6, screen[1] * 0.7);
+                let origin = Vec2::new(
+                    (screen[0] - menu_size.0) * 0.5,
+                    (screen[1] - menu_size.1) * 0.5,
+                );
+                let sx = menu_size.0 / self.menu.size.0 as f32;
+                let sy = menu_size.1 / self.menu.size.1 as f32;
+                for node in &self.menu.resolved {
+                    if let Some(el) = &node.element {
+                        match el {
+                            UiElement::Button(btn) => {
+                                let title_style = TextStyle {
+                                    color: [1.0, 1.0, 1.0, 1.0],
+                                    pixel_size: base_style.pixel_size,
+                                };
+                                let detail_style = TextStyle {
+                                    color: [0.75, 0.85, 1.0, 1.0],
+                                    pixel_size: (base_style.pixel_size as f32 * 0.8) as u32,
+                                };
+                                let x = origin.x + node.rect[0] * sx + btn.padding * sx;
+                                let y = origin.y + node.rect[1] * sy + btn.padding * sy;
+                                if let Ok(obj) = text.build_gui_text(
+                                    &btn.text,
+                                    self.font_handle,
+                                    title_style,
+                                    Vec2::new(x, y),
+                                    screen,
+                                ) {
+                                    text.draw(render_pass, None, &obj, screen);
+                                }
+                                if let Some(detail) = &btn.detail {
+                                    if let Ok(obj) = text.build_gui_text(
+                                        detail,
+                                        self.font_handle,
+                                        detail_style,
+                                        Vec2::new(x, y + title_style.pixel_size as f32 + 4.0 * sy),
+                                        screen,
+                                    ) {
+                                        text.draw(render_pass, None, &obj, screen);
+                                    }
+                                }
+                            }
+                            UiElement::Label(label) => {
+                                let style = TextStyle {
+                                    color: [1.0, 0.86, 0.47, 1.0],
+                                    pixel_size: (label.font_size * self.text_scale) as u32,
+                                };
+                                let x = origin.x + node.rect[0] * sx;
+                                let y = origin.y + node.rect[1] * sy;
+                                if let Ok(obj) = text.build_gui_text(
+                                    &label.text,
+                                    self.font_handle,
+                                    style,
+                                    Vec2::new(x, y),
+                                    screen,
+                                ) {
+                                    text.draw(render_pass, None, &obj, screen);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -533,7 +654,6 @@ impl MenuOverlay {
                 font: Some(font),
                 text_scale,
             },
-            text_scale,
         }
     }
 
@@ -578,10 +698,7 @@ impl MenuOverlay {
             .resolved
             .iter()
             .filter_map(|node| {
-                let action = node
-                    .id
-                    .as_deref()
-                    .and_then(MenuAction::from_key)?;
+                let action = node.id.as_deref().and_then(MenuAction::from_key)?;
                 Some(ButtonRect {
                     action,
                     rect: node.rect,
@@ -720,9 +837,7 @@ impl MenuOverlay {
             if let Some(el) = &node.element {
                 match el {
                     UiElement::Panel { color } => self.draw_panel_rect(node.rect, *color),
-                    UiElement::Button(btn) => {
-                        self.draw_button(node.rect, btn, node.id.as_deref())
-                    }
+                    UiElement::Button(btn) => self.draw_button(node.rect, btn, node.id.as_deref()),
                     UiElement::Label(label) => self.draw_label(node.rect, label),
                     UiElement::Image { .. } | UiElement::Spacer { .. } => {}
                 }
@@ -752,37 +867,19 @@ impl MenuOverlay {
         } else {
             [40, 60, 90, 200]
         };
-        let title_color = if hovered {
-            [255, 255, 255, 255]
-        } else {
-            [210, 220, 235, 255]
-        };
-        let detail_color = if hovered {
-            [200, 230, 255, 255]
-        } else {
-            [160, 170, 190, 255]
-        };
         let x = rect[0].round() as i32;
         let y = rect[1].round() as i32;
         let w = rect[2].round() as i32;
         let h = rect[3].round() as i32;
         self.fill_rect(x, y, w, h, base);
 
-        let line_h = self.font.height() as i32;
-        let mut cursor_y = y + spec.padding as i32;
-        if let Some(detail) = &spec.detail {
-            self.draw_text(detail, x + spec.padding as i32, cursor_y, detail_color);
-            cursor_y += line_h + 4;
-        }
-        self.draw_text(&spec.text, x + spec.padding as i32, cursor_y, title_color);
+        let _line_h = self.font.height() as i32;
+        let _ = &spec.detail;
+        // text rendered by TextSystem; keep background only
     }
 
-    fn draw_label(&mut self, rect: [f32; 4], label: &crate::ui::LabelSpec) {
-        let (w, h) = self.font.measure_text(&label.text);
-        let scale = self.text_scale;
-        let x = rect[0] + (rect[2] - w * scale) * 0.5;
-        let y = rect[1] + (rect[3] - h * scale) * 0.5;
-        self.draw_text(&label.text, x.round() as i32, y.round() as i32, [255, 220, 120, 255]);
+    fn draw_label(&mut self, _rect: [f32; 4], _label: &crate::ui::LabelSpec) {
+        // text rendered by TextSystem; background only
     }
 
     fn clear(&mut self, color: [u8; 4]) {
@@ -809,46 +906,7 @@ impl MenuOverlay {
         self.fill_rect(x + w - thickness, y, thickness, h, color);
     }
 
-    fn draw_text(&mut self, text: &str, start_x: i32, start_y: i32, color: [u8; 4]) {
-        let mut cursor_x = start_x;
-        for ch in text.chars() {
-            self.draw_char(ch, cursor_x, start_y, color, self.text_scale);
-            cursor_x = (cursor_x as f32 + self.font.advance(ch) * self.text_scale).round() as i32;
-        }
-    }
-
-    fn draw_char(
-        &mut self,
-        ch: char,
-        start_x: i32,
-        start_y: i32,
-        color: [u8; 4],
-        scale: f32,
-    ) {
-        if let Some(glyph) = self.font.bitmap(ch).cloned() {
-            let w = glyph.width as i32;
-            let h = glyph.height as i32;
-            let scale = scale.max(0.1);
-            for row in 0..h {
-                let y0 = start_y as f32 + row as f32 * scale;
-                let base = row as usize * glyph.width;
-                for col in 0..w {
-                    let alpha = glyph.bitmap[base + col as usize];
-                    if alpha > 0 {
-                        let x0 = start_x as f32 + col as f32 * scale;
-                        self.fill_rect(
-                            x0.round() as i32,
-                            y0.round() as i32,
-                            scale.ceil() as i32,
-                            scale.ceil() as i32,
-                            color,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
+    #[allow(dead_code)]
     fn pixel(&mut self, x: i32, y: i32, color: [u8; 4]) {
         if x < 0 || y < 0 || x as u32 >= self.size.0 || y as u32 >= self.size.1 {
             return;
@@ -938,18 +996,10 @@ struct DebugOverlay {
     buffer: Vec<u8>,
     size: (u32, u32),
     visible: bool,
-    font: Arc<BitmapFont>,
-    text_scale: f32,
 }
 
 impl DebugOverlay {
-    fn new(
-        renderer: &Renderer,
-        global_layout: &GlobalsLayouts,
-        font: Arc<BitmapFont>,
-        text_scale: f32,
-        aspect_correction: f32,
-    ) -> Self {
+    fn new(renderer: &Renderer, global_layout: &GlobalsLayouts, aspect_correction: f32) -> Self {
         let size = (256u32, 96u32);
         let buffer = vec![0u8; (size.0 * size.1 * 4) as usize];
         let texture = Texture::from_rgba(
@@ -976,30 +1026,15 @@ impl DebugOverlay {
             buffer,
             size,
             visible: true,
-            font,
-            text_scale,
         }
     }
 
-    fn update(&mut self, renderer: &Renderer, stats: &OverlayStats) {
+    fn update(&mut self, renderer: &Renderer, _stats: &OverlayStats) {
         if !self.visible {
             return;
         }
 
         self.clear();
-        let primary = [240, 240, 240, 255];
-        let accent = [120, 200, 255, 255];
-
-        self.draw_text_line(&format!("FPS   {:>5.1}", stats.fps), 6, 8, primary);
-        self.draw_text_line(&format!("MS    {:>5.2}", stats.frame_ms), 6, 22, accent);
-        self.draw_text_line(
-            &format!("CHUNKS {:>4}", stats.chunks_loaded),
-            6,
-            36,
-            primary,
-        );
-        self.draw_text_line(&format!("DRAWS  {:>4}", stats.draw_calls), 6, 50, primary);
-
         self.element
             .texture
             .write_rgba(&renderer.queue, &self.buffer, self.size.0, self.size.1);
@@ -1018,50 +1053,7 @@ impl DebugOverlay {
         }
     }
 
-    fn draw_text_line(&mut self, text: &str, start_x: usize, start_y: usize, color: [u8; 4]) {
-        let mut cursor_x = start_x;
-        for ch in text.chars() {
-            self.draw_char(ch, cursor_x, start_y, color, self.text_scale);
-            cursor_x = (cursor_x as f32 + self.font.advance(ch) * self.text_scale).round() as usize;
-        }
-    }
-
-    fn draw_char(
-        &mut self,
-        ch: char,
-        start_x: usize,
-        start_y: usize,
-        color: [u8; 4],
-        scale: f32,
-    ) {
-        if let Some(glyph) = self.font.bitmap(ch).cloned() {
-            let w = glyph.width;
-            let h = glyph.height;
-            let scale = scale.max(0.1);
-            for row in 0..h {
-                let y0 = start_y as f32 + row as f32 * scale;
-                let base = row * w;
-                for col in 0..w {
-                    let alpha = glyph.bitmap[base + col];
-                    if alpha > 0 {
-                        let x0 = start_x as f32 + col as f32 * scale;
-                        let w_px = scale.ceil() as i32;
-                        let h_px = scale.ceil() as i32;
-                        for yy in 0..h_px {
-                            for xx in 0..w_px {
-                                self.pixel(
-                                    (x0.round() as i32 + xx) as usize,
-                                    (y0.round() as i32 + yy) as usize,
-                                    color,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
+    #[allow(dead_code)]
     fn pixel(&mut self, x: usize, y: usize, color: [u8; 4]) {
         if x as u32 >= self.size.0 || y as u32 >= self.size.1 {
             return;

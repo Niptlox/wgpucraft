@@ -186,15 +186,14 @@ impl UiNode {
                     element: self.element.clone(),
                 });
                 for child in &self.children {
-                    child.compute_layout(
-                        [rect_world[0], rect_world[1]],
-                        [r[2], r[3]],
-                        ctx,
-                        out,
-                    );
+                    child.compute_layout([rect_world[0], rect_world[1]], [r[2], r[3]], ctx, out);
                 }
             }
-            Layout::FlexColumn { gap, padding, align } => {
+            Layout::FlexColumn {
+                gap,
+                padding,
+                align,
+            } => {
                 let inner_w = (parent_size[0] - padding * 2.0).max(0.0);
                 if let Some(el) = &self.element {
                     out.push(ResolvedNode {
@@ -219,17 +218,16 @@ impl UiNode {
                         Align::Center => *padding + (inner_w - width) * 0.5,
                         Align::End => *padding + (inner_w - width),
                     };
-                    let rect_world = [
-                        origin[0] + x,
-                        origin[1] + cursor_y,
-                        width,
-                        height,
-                    ];
+                    let rect_world = [origin[0] + x, origin[1] + cursor_y, width, height];
                     child.compute_layout([rect_world[0], rect_world[1]], [width, height], ctx, out);
                     cursor_y += height + gap;
                 }
             }
-            Layout::FlexRow { gap, padding, align } => {
+            Layout::FlexRow {
+                gap,
+                padding,
+                align,
+            } => {
                 let inner_h = (parent_size[1] - padding * 2.0).max(0.0);
                 if let Some(el) = &self.element {
                     out.push(ResolvedNode {
@@ -254,12 +252,7 @@ impl UiNode {
                         Align::Center => *padding + (inner_h - height) * 0.5,
                         Align::End => *padding + (inner_h - height),
                     };
-                    let rect_world = [
-                        origin[0] + cursor_x,
-                        origin[1] + y,
-                        width,
-                        height,
-                    ];
+                    let rect_world = [origin[0] + cursor_x, origin[1] + y, width, height];
                     child.compute_layout([rect_world[0], rect_world[1]], [width, height], ctx, out);
                     cursor_x += width + gap;
                 }

@@ -67,7 +67,10 @@ impl UiElement {
                     [w * scale, h * scale]
                 } else {
                     let scale = ctx.text_scale;
-                    [label.text.len() as f32 * 8.0 * scale, label.font_size * scale]
+                    [
+                        label.text.len() as f32 * 8.0 * scale,
+                        label.font_size * scale,
+                    ]
                 }
             }
             UiElement::Button(button) => {
@@ -79,11 +82,7 @@ impl UiElement {
                         .map(|d| font.measure_text(d).0)
                         .unwrap_or(0.0);
                     let text_w = w.max(detail_w);
-                    let text_h = if button.detail.is_some() {
-                        h * 2.0
-                    } else {
-                        h
-                    };
+                    let text_h = if button.detail.is_some() { h * 2.0 } else { h };
                     let scale = ctx.text_scale;
                     [
                         text_w * scale + button.padding * 2.0,

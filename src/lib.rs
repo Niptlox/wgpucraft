@@ -4,8 +4,9 @@ pub mod hud;
 pub mod launcher;
 pub mod player;
 pub mod render;
-pub mod ui;
 pub mod terrain_gen;
+pub mod text;
+pub mod ui;
 
 use hud::{HUD, OverlayStats, icons_atlas::IconType};
 use player::{Player, camera::Camera, raycast::Ray};
