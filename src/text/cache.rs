@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use crate::text::{atlas::GlyphAtlasEntry, font::{GlyphBitmap, GlyphKey}};
+use crate::text::{
+    atlas::GlyphAtlasEntry,
+    font::{GlyphBitmap, GlyphKey},
+};
 use wgpu::Queue;
 
 pub struct CachedGlyph {

@@ -264,15 +264,17 @@ impl TextSystem {
             let quad = match mode {
                 TextMode::Gui => {
                     let screen = screen_size.expect("screen size required for GUI");
-                    let to_clip = |pos: Vec3| -> Vec3 {
-                        let nx = (pos.x / screen[0]) * 2.0 - 1.0;
-                        let ny = 1.0 - (pos.y / screen[1]) * 2.0;
-                        Vec3::new(nx, ny, 0.0)
+                    let to_clip = |px: f32, py: f32| -> Vec3 {
+                        Vec3::new(
+                            (px / screen[0]) * 2.0 - 1.0,
+                            1.0 - (py / screen[1]) * 2.0,
+                            0.0,
+                        )
                     };
-                    let p0 = to_clip(origin + Vec3::new(x0, y0, 0.0));
-                    let p1 = to_clip(origin + Vec3::new(x0 + w, y0, 0.0));
-                    let p2 = to_clip(origin + Vec3::new(x0 + w, y0 + h, 0.0));
-                    let p3 = to_clip(origin + Vec3::new(x0, y0 + h, 0.0));
+                    let p0 = to_clip(origin.x + x0, origin.y + y0);
+                    let p1 = to_clip(origin.x + x0 + w, origin.y + y0);
+                    let p2 = to_clip(origin.x + x0 + w, origin.y + y0 + h);
+                    let p3 = to_clip(origin.x + x0, origin.y + y0 + h);
                     [p0, p1, p2, p3]
                 }
                 TextMode::World => {
@@ -289,13 +291,37 @@ impl TextSystem {
             let color = style.color;
             let verts = vec![
                 // first triangle
-                TextVertex { position: quad[0].into(), uv: [uv[0], uv[1]], color },
-                TextVertex { position: quad[1].into(), uv: [uv[2], uv[1]], color },
-                TextVertex { position: quad[2].into(), uv: [uv[2], uv[3]], color },
+                TextVertex {
+                    position: quad[0].into(),
+                    uv: [uv[0], uv[1]],
+                    color,
+                },
+                TextVertex {
+                    position: quad[1].into(),
+                    uv: [uv[2], uv[1]],
+                    color,
+                },
+                TextVertex {
+                    position: quad[2].into(),
+                    uv: [uv[2], uv[3]],
+                    color,
+                },
                 // second triangle
-                TextVertex { position: quad[0].into(), uv: [uv[0], uv[1]], color },
-                TextVertex { position: quad[2].into(), uv: [uv[2], uv[3]], color },
-                TextVertex { position: quad[3].into(), uv: [uv[0], uv[3]], color },
+                TextVertex {
+                    position: quad[0].into(),
+                    uv: [uv[0], uv[1]],
+                    color,
+                },
+                TextVertex {
+                    position: quad[2].into(),
+                    uv: [uv[2], uv[3]],
+                    color,
+                },
+                TextVertex {
+                    position: quad[3].into(),
+                    uv: [uv[0], uv[3]],
+                    color,
+                },
             ];
             let idx = atlas_entry.page;
             if vertices_by_page.len() <= idx {

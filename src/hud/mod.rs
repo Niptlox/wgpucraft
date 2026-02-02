@@ -24,6 +24,9 @@ use crate::render::{
 
 pub mod icons_atlas;
 
+// Menu quad height/width in clip space (used for layout mapping).
+const MENU_CLIP_SIZE: f32 = 1.4;
+
 #[derive(Debug, Clone, Copy)]
 pub struct OverlayStats {
     pub fps: f32,
@@ -547,27 +550,30 @@ impl Draw for HUD {
             }
 
             if self.menu.visible {
-                let menu_size = (screen[0] * 0.6, screen[1] * 0.7);
-                let origin = Vec2::new(
-                    (screen[0] - menu_size.0) * 0.5,
-                    (screen[1] - menu_size.1) * 0.5,
-                );
-                let sx = menu_size.0 / self.menu.size.0 as f32;
-                let sy = menu_size.1 / self.menu.size.1 as f32;
+                // Menu quad occupies MENU_CLIP_SIZE of clip height; convert to pixels so text matches the textured quad.
+                let menu_px = (MENU_CLIP_SIZE * 0.5) * screen[1];
+                let origin = Vec2::new((screen[0] - menu_px) * 0.5, (screen[1] - menu_px) * 0.5);
+                let menu_scale = menu_px / self.menu.size.0 as f32; // texture is square
                 for node in &self.menu.resolved {
                     if let Some(el) = &node.element {
                         match el {
                             UiElement::Button(btn) => {
+                                let title_px = ((base_style.pixel_size as f32) * menu_scale)
+                                    .max(1.0)
+                                    .round() as u32;
                                 let title_style = TextStyle {
                                     color: [1.0, 1.0, 1.0, 1.0],
-                                    pixel_size: base_style.pixel_size,
+                                    pixel_size: title_px,
                                 };
                                 let detail_style = TextStyle {
                                     color: [0.75, 0.85, 1.0, 1.0],
-                                    pixel_size: (base_style.pixel_size as f32 * 0.8) as u32,
+                                    pixel_size: ((base_style.pixel_size as f32) * 0.8 * menu_scale)
+                                        .max(1.0)
+                                        .round()
+                                        as u32,
                                 };
-                                let x = origin.x + node.rect[0] * sx + btn.padding * sx;
-                                let y = origin.y + node.rect[1] * sy + btn.padding * sy;
+                                let x = origin.x + (node.rect[0] + btn.padding) * menu_scale;
+                                let y = origin.y + (node.rect[1] + btn.padding) * menu_scale;
                                 if let Ok(obj) = text.build_gui_text(
                                     &btn.text,
                                     self.font_handle,
@@ -582,7 +588,10 @@ impl Draw for HUD {
                                         detail,
                                         self.font_handle,
                                         detail_style,
-                                        Vec2::new(x, y + title_style.pixel_size as f32 + 4.0 * sy),
+                                        Vec2::new(
+                                            x,
+                                            y + title_style.pixel_size as f32 + 4.0 * menu_scale,
+                                        ),
                                         screen,
                                     ) {
                                         text.draw(render_pass, None, &obj, screen);
@@ -592,10 +601,13 @@ impl Draw for HUD {
                             UiElement::Label(label) => {
                                 let style = TextStyle {
                                     color: [1.0, 0.86, 0.47, 1.0],
-                                    pixel_size: (label.font_size * self.text_scale) as u32,
+                                    pixel_size: (label.font_size * self.text_scale * menu_scale)
+                                        .max(1.0)
+                                        .round()
+                                        as u32,
                                 };
-                                let x = origin.x + node.rect[0] * sx;
-                                let y = origin.y + node.rect[1] * sy;
+                                let x = origin.x + node.rect[0] * menu_scale;
+                                let y = origin.y + node.rect[1] * menu_scale;
                                 if let Ok(obj) = text.build_gui_text(
                                     &label.text,
                                     self.font_handle,
@@ -631,7 +643,8 @@ impl MenuOverlay {
         let texture =
             Texture::from_rgba(device, queue, &buffer, size.0, size.1, "menu_overlay").unwrap();
         let bind_group = global_layout.bind_hud_texture(device, &texture, None);
-        let (verts, indices) = create_hud_quad(0.0, 0.0, 1.4, 1.4, aspect_correction);
+        let (verts, indices) =
+            create_hud_quad(0.0, 0.0, MENU_CLIP_SIZE, MENU_CLIP_SIZE, aspect_correction);
         let model = Model::new(device, &Mesh { verts, indices }).unwrap();
 
         Self {
@@ -665,7 +678,8 @@ impl MenuOverlay {
         aspect_correction: f32,
     ) {
         self.aspect_correction = aspect_correction;
-        let (verts, indices) = create_hud_quad(0.0, 0.0, 1.4, 1.4, aspect_correction);
+        let (verts, indices) =
+            create_hud_quad(0.0, 0.0, MENU_CLIP_SIZE, MENU_CLIP_SIZE, aspect_correction);
         self.element.model = Model::new(device, &Mesh { verts, indices }).unwrap();
         // Rebind to keep texture alive after device change (resize doesn't change device, but safe).
         self.element.bind_group =
@@ -790,8 +804,8 @@ impl MenuOverlay {
     fn hover_at(&mut self, clip_x: f32, clip_y: f32, queue: &wgpu::Queue) {
         // Map clip coords that cover only the menu quad (width/height = 1.4) back into texture pixels.
         // Quad bounds in clip space (center at 0, height = 1.4, width scaled by aspect).
-        let half_w = (1.4 / 2.0) * self.aspect_correction;
-        let half_h = 1.4 / 2.0;
+        let half_w = (MENU_CLIP_SIZE / 2.0) * self.aspect_correction;
+        let half_h = MENU_CLIP_SIZE / 2.0;
         let x_min = -half_w;
         let x_max = half_w;
         let y_min = -half_h;

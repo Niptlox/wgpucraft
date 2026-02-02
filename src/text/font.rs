@@ -1,5 +1,5 @@
 use anyhow::Result;
-use freetype::{face::LoadFlag, Face, Library};
+use freetype::{Face, Library, face::LoadFlag};
 use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
